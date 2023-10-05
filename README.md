@@ -2,7 +2,7 @@
 Markus Schütz, Lukas Herzberger, Michael Wimmer
 
 Paper: <a href="https://www.cg.tuwien.ac.at/research/publications/2023/SCHUETZ-2023-SIMLOD/SCHUETZ-2023-SIMLOD-paper.pdf">"SimLOD: Simultaneous LOD Generation and Rendering"</a><br>
-Binaries: <a href="https://github.com/m-schuetz/SimLOD/releases/">SimLOD 1.0</a>
+Binaries: <a href="https://github.com/m-schuetz/SimLOD/releases/">SimLOD 1.0</a> (May require a CUDA 11.8 installation due to hot reload? We'll work on a standalone binary)
 
 This project loads point clouds, creates an LOD structure on-the-fly, and immediatelly displays the results in real time. 
 
