@@ -127,7 +127,7 @@ cmake .. && make            # Configure CMake and build the SimLOD target
 
 Different subsets of San Simeon, specifically the Morro Bay area, are provided as test data. Each archive contains the same point cloud in las, laz and simlod formats.
 
-* <a href="https://users.cg.tuwien.ac.at/~mschuetz/permanent/morro_bay_36.zip">Morro Bay (36M points)</a>
+* <a href="https://users.cg.tuwien.ac.at/~mschuetz/permanent/morro_bay_36M.zip">Morro Bay (36M points)</a>
 * <a href="https://users.cg.tuwien.ac.at/~mschuetz/permanent/morro_bay_73M.zip">Morro Bay (73M points)</a>
 * <a href="https://users.cg.tuwien.ac.at/~mschuetz/permanent/morro_bay_167M.zip">Morro Bay (167M points)</a>
 * <a href="https://users.cg.tuwien.ac.at/~mschuetz/permanent/morro_bay_350M.zip">Morro Bay (350M points)</a>
