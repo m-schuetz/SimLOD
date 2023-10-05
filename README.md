@@ -1,6 +1,10 @@
 # SimLOD: Simultaneous LOD Generation and Rendering
+Markus Schütz, Lukas Herzberger, Michael Wimmer
 
-This project loads point clouds, creates an LOD structure on-the-fly, and immediatelly displays the results in real time. This repository contains the source code for the paper "SimLOD: Simultaneous LOD Generation and Rendering".
+Paper: <a href="https://www.cg.tuwien.ac.at/research/publications/2023/SCHUETZ-2023-SIMLOD/SCHUETZ-2023-SIMLOD-paper.pdf">"SimLOD: Simultaneous LOD Generation and Rendering"</a>.
+
+This project loads point clouds, creates an LOD structure on-the-fly, and immediatelly displays the results in real time. 
+
 
 On an RTX 4090 and PCIe 5.0 SSD (12GB/s), we are able to load and real-time render point clouds at rates of about 200-300 million points per second (MP/s) from the LAS format, 30 MP/s from compressed LAZ files, and up to 580 MP/s from an optimal XYZRGBA(16bytes/point) format.
 
@@ -66,7 +70,7 @@ During rendering, a CUDA kernel first computes a list of visible octree nodes. E
 
 #### Prebuilt windows binaries
 
-* TODO: Add link to binary release.
+* Prebuilt binaries are available at the release page: https://github.com/m-schuetz/SimLOD/releases/
 
 #### Windows with Visual Studio 2022
 
@@ -119,6 +123,19 @@ cmake .. && make            # Configure CMake and build the SimLOD target
 	</tr>
 </table>
 
+## Data Sets
+
+Different subsets of San Simeon, specifically the Morro Bay area, are provided as test data. Each archive contains the same point cloud in las, laz and simlod formats.
+
+* <a href="https://users.cg.tuwien.ac.at/~mschuetz/permanent/morro_bay_36.zip">Morro Bay (36M points)</a>
+* <a href="https://users.cg.tuwien.ac.at/~mschuetz/permanent/morro_bay_73M.zip">Morro Bay (73M points)</a>
+* <a href="https://users.cg.tuwien.ac.at/~mschuetz/permanent/morro_bay_167M.zip">Morro Bay (167M points)</a>
+* <a href="https://users.cg.tuwien.ac.at/~mschuetz/permanent/morro_bay_350M.zip">Morro Bay (350M points)</a>
+
+The <a href="https://doi.org/10.5069/G9CN71V5">full San Simeon data set (18 billion points)</a> is available at Open Topography:
+<pre>PG&E Diablo Canyon Power Plant (DCPP): San Simeon and Cambria Faults, CA. Distributed by OpenTopography. https://doi.org/10.5069/G9CN71V5 . Accessed: 2023-10-05
+</pre>
+
 
 ## Bibtex
 
@@ -135,6 +152,14 @@ cmake .. && make            # Configure CMake and build the SimLOD target
 
 ## References
 
-Most relevant related work
+Most relevant related work:
 
-* 
+* WAND, MICHAEL, BERNER, ALEXANDER, BOKELOH,
+MARTIN, et al. “Processing and interactive editing of huge point clouds
+from 3D scanners”. Computers & Graphics 32.2 (2008), 204–220 2–4,10.
+* GOBBETTI, ENRICO and MARTON, FABIO. “Layered Point
+Clouds: A Simple and Efficient Multiresolution Structure for Distributing and Rendering Gigantic Point-sampled Models”. Comput. Graph.
+28.6 (2004), 815–826 2, 3.
+* SCHÜTZ, MARKUS, KERBL, BERNHARD, KLAUS, PHILIP,
+and WIMMER, MICHAEL. GPU-Accelerated LOD Generation for Point
+Clouds. Feb. 2023.
