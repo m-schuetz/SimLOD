@@ -1,7 +1,8 @@
 # SimLOD: Simultaneous LOD Generation and Rendering
 Markus Schütz, Lukas Herzberger, Michael Wimmer
 
-Paper: <a href="https://www.cg.tuwien.ac.at/research/publications/2023/SCHUETZ-2023-SIMLOD/SCHUETZ-2023-SIMLOD-paper.pdf">"SimLOD: Simultaneous LOD Generation and Rendering"</a>.
+Paper: <a href="https://www.cg.tuwien.ac.at/research/publications/2023/SCHUETZ-2023-SIMLOD/SCHUETZ-2023-SIMLOD-paper.pdf">"SimLOD: Simultaneous LOD Generation and Rendering"</a><br>
+Binaries: <a href="https://github.com/m-schuetz/SimLOD/releases/">SimLOD 1.0</a>
 
 This project loads point clouds, creates an LOD structure on-the-fly, and immediatelly displays the results in real time. 
 
