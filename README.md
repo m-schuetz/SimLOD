@@ -23,7 +23,7 @@ Right now we only display data sets that fit in GPU memory, but support for arbi
 </tr>
 </table>
 
-The generated LOD structure is an octree that stores voxels in inner nodes and original point cloud data in leaf nodes. Voxels are created by sampling on a 128³ grid. Due to the sparsity in surfacic data sets, the voxels themselves are stored in lists instead of grids. In order to support growing amounts of voxels and points as new data is inserted into the octree, we use linked lists of chunks of points/voxels. 
+The generated LOD structure is an octree that stores voxels in inner nodes and original point cloud data in leaf nodes [WBB08]. Voxels are created by sampling on a 128³ grid. Due to the sparsity in surfacic data sets, the voxels themselves are stored in lists instead of grids. In order to support growing amounts of voxels and points as new data is inserted into the octree, we use linked lists of chunks of points/voxels. 
 
 <table>
 <tr style="border: none">
@@ -155,12 +155,12 @@ The <a href="https://doi.org/10.5069/G9CN71V5">full San Simeon data set (18 bill
 
 Most relevant related work:
 
-* WAND, MICHAEL, BERNER, ALEXANDER, BOKELOH,
+* [WBB08] WAND, MICHAEL, BERNER, ALEXANDER, BOKELOH,
 MARTIN, et al. “Processing and interactive editing of huge point clouds
 from 3D scanners”. Computers & Graphics 32.2 (2008), 204–220 2–4,10.
-* GOBBETTI, ENRICO and MARTON, FABIO. “Layered Point
+* [GM04] GOBBETTI, ENRICO and MARTON, FABIO. “Layered Point
 Clouds: A Simple and Efficient Multiresolution Structure for Distributing and Rendering Gigantic Point-sampled Models”. Comput. Graph.
 28.6 (2004), 815–826 2, 3.
-* SCHÜTZ, MARKUS, KERBL, BERNHARD, KLAUS, PHILIP,
+* [SKKW23] SCHÜTZ, MARKUS, KERBL, BERNHARD, KLAUS, PHILIP,
 and WIMMER, MICHAEL. GPU-Accelerated LOD Generation for Point
 Clouds. Feb. 2023.
