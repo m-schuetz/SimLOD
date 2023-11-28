@@ -44,17 +44,10 @@ target_include_directories(${PROJECT_NAME} PRIVATE
 find_package(CUDAToolkit 11.8 REQUIRED)
 target_include_directories(${PROJECT_NAME} PRIVATE
 	CUDAToolkit_INCLUDE_DIRS)
-if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
-    target_link_libraries(${PROJECT_NAME}
-        CUDA::cuda_driver
-        CUDA::nvrtc
-        CUDA::nvrtc_static
-        CUDA::nvrtc_builtins_static)
-elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    target_link_libraries(${PROJECT_NAME}
-        CUDA::cuda_driver
-        CUDA::nvrtc)
-endif()
+
+target_link_libraries(${PROJECT_NAME}
+	CUDA::cuda_driver
+	CUDA::nvrtc)
 
 ## OpenGL
 find_package(OpenGL REQUIRED)
