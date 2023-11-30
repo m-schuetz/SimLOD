@@ -43,18 +43,32 @@ struct CudaModule{
 		// cout << "================================================================================" << endl;
 		printfmt("compiling {} ", fs::path(path).filename().string());
 
-		success = false;
+		const char* cuda_path_cstr = std::getenv("CUDA_PATH");
+		std::string cuda_path;
+		if (cuda_path_cstr) {
+			cuda_path = std::string(cuda_path_cstr);
+			if (!cuda_path.empty()) {
+				std::cout << "\nCUDA_PATH is set to: " << cuda_path << std::endl;
+			} else {
+				std::cout << "\nCUDA_PATH is empty. Please set it." << std::endl;
+				exit(-1);
+			}
+		} else {
+			std::cout << "\nCUDA_PATH is not set. Please set it." << std::endl;
+			exit(-1);
+		}
 
-		string dir = fs::path(path).parent_path().string();
-		string optInclude = "-I " + dir;
-
-		string cuda_path = std::getenv("CUDA_PATH");
-		string cuda_include = "-I " + cuda_path + "/include";
+		const string cuda_include = "-I " + cuda_path + "/include";
+		const string dir = fs::path(path).parent_path().string();
+		const string optInclude = "-I " + dir;
 
 		nvrtcProgram prog;
 		string source = readFile(path);
 		nvrtcCreateProgram(&prog, source.c_str(), name.c_str(), 0, NULL, NULL);
-		std::vector<const char*> opts = { 
+
+		success = false;
+
+		std::vector<const char*> opts = {
 			// "--gpu-architecture=compute_75",
 			"--gpu-architecture=compute_86",
 			"--use_fast_math",

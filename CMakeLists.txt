@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.26)
+cmake_minimum_required(VERSION 3.22)
 project(SimLOD)
 
 include(FetchContent)
@@ -19,7 +19,19 @@ set_property(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT $
 set_target_properties(${PROJECT_NAME} PROPERTIES VS_DEBUGGER_WORKING_DIRECTORY "$<TARGET_FILE_DIR:${PROJECT_NAME}>"
                                                VS_DEBUGGER_COMMAND           "$<TARGET_FILE:${PROJECT_NAME}>"
                                                VS_DEBUGGER_ENVIRONMENT       "PATH=%PATH%;${CMAKE_PREFIX_PATH}")
-
+# Build options based on CMAKE_BUILD_TYPE
+function(configure_build_type)
+	if (CMAKE_BUILD_TYPE STREQUAL "Debug")
+		target_compile_options(${PROJECT_NAME} PRIVATE -O0 -g)
+	elseif (CMAKE_BUILD_TYPE STREQUAL "Release")
+		target_compile_options(${PROJECT_NAME} PRIVATE -O3)
+	else()
+		message(WARNING "No CMAKE_BUILD_TYPE specified, defaulting to Release settings.")
+		set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Default build type: Release" FORCE)
+		target_compile_options(${PROJECT_NAME} PRIVATE -O3)
+	endif ()
+endfunction()
+configure_build_type()
 
 target_include_directories(${PROJECT_NAME} PRIVATE
     include
@@ -29,14 +41,13 @@ target_include_directories(${PROJECT_NAME} PRIVATE
 # Dependencies
 
 ## CUDA toolkit
-find_package(CUDAToolkit 11.7 REQUIRED)
+find_package(CUDAToolkit 11.8 REQUIRED)
 target_include_directories(${PROJECT_NAME} PRIVATE
 	CUDAToolkit_INCLUDE_DIRS)
+
 target_link_libraries(${PROJECT_NAME}
 	CUDA::cuda_driver
-	CUDA::nvrtc
-	CUDA::nvrtc_static
-	CUDA::nvrtc_builtins_static)
+	CUDA::nvrtc)
 
 ## OpenGL
 find_package(OpenGL REQUIRED)
