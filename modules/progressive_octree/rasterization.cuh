@@ -166,10 +166,6 @@ void rasterizeLines(Lines* lines, uint64_t* target, int width, int height, mat4 
 			x = clamp(x, 0, width - 1);
 			y = clamp(y, 0, height - 1);
 
-			if(RIGHTSIDE_BOXES){
-				if(x < width / 2) continue;
-			}
-
 			int pixelID = x + width * y;
 
 			uint64_t idepth = *((uint32_t*)&depth);

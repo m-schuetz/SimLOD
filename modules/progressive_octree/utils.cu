@@ -1,5 +1,5 @@
 
-#include "utils.h.cu"
+#include "utils.cuh"
 
 void printNumber(int64_t number, int leftPad){
 	int digits = ceil(log10(double(number)));

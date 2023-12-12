@@ -92,7 +92,9 @@
 		"__config": "cpp",
 		"__threading_support": "cpp",
 		"target": "cpp",
-		"bitset": "cpp"
+		"bitset": "cpp",
+		"ranges": "cpp",
+		"span": "cpp"
 	},
 	"files.trimTrailingWhitespace": false,
 	"editor.fontSize": 20,
