@@ -17,6 +17,13 @@ struct Lines{
 	Point* vertices;
 };
 
+struct Triangles{
+	int numTriangles;
+	float3* positions;
+	float2* uvs;
+	uint32_t* colors;
+};
+
 float4 operator*(const mat4& a, const float4& b){
 	return make_float4(
 		dot(a.rows[0], b),

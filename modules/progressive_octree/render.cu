@@ -84,6 +84,27 @@ void kernel_render(
 
 	grid.sync();
 
+	uint32_t* numProcessedTriangles = allocator->alloc<uint32_t*>(4);
+
+
+	Triangles* triangles = allocator->alloc<Triangles*>(sizeof(Triangles));
+	triangles->positions = allocator->alloc<float3*   >(1000 * sizeof(float3));
+	triangles->uvs       = allocator->alloc<float2*   >(1000 * sizeof(float2));
+	triangles->colors    = allocator->alloc<uint32_t* >(1000 * sizeof(uint32_t));
+
+
+	if(grid.thread_rank() == 0){
+		triangles->numTriangles = 0;
+		drawBox(triangles, {0.0f, 0.0f, 0.0f}, {1.0f, 2.0f, 3.0f}, 0x000000ff);
+		drawBox(triangles, {4.0f, 0.0f, 0.0f}, {1.0f, 0.5f, 0.2f}, 0x0000ff00);
+	}
+
+	grid.sync();
+
+	rasterizeTriangles(triangles, numProcessedTriangles, framebuffer, uniforms);
+
+	grid.sync();
+
 	// transfer framebuffer to opengl texture
 	processRange(0, uniforms.width * uniforms.height, [&](int pixelIndex){
 
