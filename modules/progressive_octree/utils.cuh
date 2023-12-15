@@ -261,6 +261,27 @@ struct Allocator{
 	}
 
 	template<class T>
+	T* alloc2(int numElements){
+
+		auto ptr = reinterpret_cast<T*>(buffer + offset);
+
+		int64_t size = numElements * sizeof(T);
+		int64_t newOffset = offset + size;
+		
+		// make allocated buffer location 16-byte aligned to avoid 
+		// potential problems with bad alignments
+		int64_t remainder = (newOffset % 16ll);
+
+		if(remainder != 0ll){
+			newOffset = (newOffset - remainder) + 16ll;
+		}
+		
+		this->offset = newOffset;
+
+		return ptr;
+	}
+
+	template<class T>
 	T alloc(int64_t size, const char* label){
 
 		// if(isFirstThread()){

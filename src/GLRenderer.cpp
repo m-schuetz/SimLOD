@@ -128,10 +128,10 @@ void GLRenderer::init(){
 		}
 
 		// SECOND MONITOR
-		//int xpos;
-		//int ypos;
-		// glfwGetMonitorPos(monitors[1], &xpos, &ypos);
-		// glfwSetWindowPos(window, xpos, ypos);
+		int xpos;
+		int ypos;
+		glfwGetMonitorPos(monitors[1], &xpos, &ypos);
+		glfwSetWindowPos(window, xpos, ypos);
 
 		// FIRST
 		// glfwSetWindowPos(window, 0, 0);

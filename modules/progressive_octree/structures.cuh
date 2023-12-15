@@ -2,7 +2,7 @@
 
 constexpr float PI = 3.1415;
 
-struct Point{
+struct Vertex{
 	float x;
 	float y;
 	float z;
@@ -14,7 +14,7 @@ struct Lines{
 	unsigned int padding0;
 	unsigned int padding1;
 	unsigned int padding2;
-	Point* vertices;
+	Vertex* vertices;
 };
 
 struct Triangles{

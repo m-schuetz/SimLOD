@@ -4,13 +4,13 @@
 
 void drawLine(Lines* lines, float3 start, float3 end, uint32_t color){
 
-	Point pStart;
+	Vertex pStart;
 	pStart.x = start.x;
 	pStart.y = start.y;
 	pStart.z = start.z;
 	pStart.color = color;
 
-	Point pEnd;
+	Vertex pEnd;
 	pEnd.x = end.x;
 	pEnd.y = end.y;
 	pEnd.z = end.z;
@@ -108,7 +108,12 @@ void drawBox(Triangles* triangles, float3 pos, float3 size, uint32_t color){
 }
 
 
-void rasterizePoints(Point* points, uint32_t numPoints, uint64_t* target, float width, float height, mat4 transform){
+void rasterizePoints(
+	Point* points, uint32_t numPoints, 
+	uint64_t* target, 
+	float width, float height, 
+	mat4 transform
+){
 
 	processRange(numPoints, [&](int index){
 
@@ -159,8 +164,8 @@ void rasterizeLines(Lines* lines, uint64_t* target, int width, int height, mat4 
 	int numLines = lines->count / 2;
 	processRange(0, numLines, [&](int lineIndex){
 
-		Point start = lines->vertices[2 * lineIndex + 0];
-		Point end = lines->vertices[2 * lineIndex + 1];
+		Vertex start = lines->vertices[2 * lineIndex + 0];
+		Vertex end = lines->vertices[2 * lineIndex + 1];
 
 		float3 dir = float3{
 			end.x - start.x,

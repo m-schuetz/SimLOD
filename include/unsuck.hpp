@@ -374,6 +374,19 @@ inline string readTextFile(string path) {
 	return str;
 }
 
+inline vector<string> listFiles(string directory){
+
+	vector<string> files;
+
+	for (const auto& entry : fs::directory_iterator(directory)) {
+		string file = entry.path().string();
+		
+		files.push_back(file);
+	}
+
+	return files;
+}
+
 
 // taken from: https://stackoverflow.com/questions/18816126/c-read-the-whole-file-in-buffer
 // inline vector<char> readBinaryFile(string path) {

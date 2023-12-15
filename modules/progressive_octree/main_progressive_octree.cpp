@@ -28,6 +28,8 @@ using namespace fmt;
 #include "HostDeviceInterface.h"
 #include "SimlodLoader.h"
 #include "LasLoader.h"
+//#include "src/arithmeticdecoder.hpp"
+//#include "src/integercompressor.hpp"
 
 using namespace std;
 
@@ -36,24 +38,23 @@ vector<string> paths = {
 	// "d:/dev/pointclouds/riegl/retz.las",
 };
 
-struct Point{
-	float x;
-	float y;
-	float z;
-	union{
-		uint32_t color;
-		uint8_t rgba[4];
-	};
-};
+vector<string> tilePaths;
+vector<Tile> tiles;
+vector<Chunk> chunks;
 
 CUdevice device;
 CUcontext context;
 int numSMs;
 
 CUdeviceptr cptr_buffer;
-CUdeviceptr cptr_renderbuffer;
 CUdeviceptr cptr_stats;
 CUdeviceptr cptr_frameStart;
+CUdeviceptr cptr_tiles;
+CUdeviceptr cptr_chunks;
+CUdeviceptr cptr_commandsQueue;
+CUdeviceptr cptr_commandsQueueCounter;
+
+
 CUgraphicsResource cugl_colorbuffer;
 CUevent ce_render_start, ce_render_end;
 CUevent ce_update_start, ce_update_end;
@@ -66,6 +67,26 @@ glm::mat4 transform_updatebound;
 
 Stats stats;
 void* h_stats_pinned = nullptr;
+void* h_commandQueue_pinned = nullptr;
+void* h_commandQueueCounter_pinned = nullptr;
+uint64_t commandsLoadedFromDevice = 0;
+
+struct PendingCommandLoad{
+	uint64_t start_0;
+	uint64_t end_0;
+	uint64_t start_1;
+	uint64_t end_1;
+	CUevent ce_ranges_loaded;
+};
+deque<PendingCommandLoad> pendingCommandLoads;
+
+struct Task_LoadChunk{
+	int tileID;
+	int chunkIndex; // within tile
+	int chunkID;
+};
+deque<Task_LoadChunk> tasks_loadChunk;
+mutex mtx_loadChunk;
 
 struct {
 	bool useHighQualityShading       = false;
@@ -95,6 +116,54 @@ float3 boxMax  = float3{-InfinityF, -InfinityF, -InfinityF};
 float3 boxSize = float3{0.0, 0.0, 0.0};
 
 uint64_t frameCounter = 0;
+
+struct LaszipVlrItem{
+	int type = 0;
+	int size = 0;
+	int version = 0;
+};
+
+struct LaszipVlr{
+	int compressor = 0;
+	int coder = 0;
+	int versionMajor = 0;
+	int versionMinor = 0;
+	int versionRevision = 0;
+	int options = 0;
+	int chunkSize = 0;
+	int numberOfSpecialEvlrs = 0;
+	int offsetToSpecialEvlrs = 0;
+	int numItems = 0;
+	vector<LaszipVlrItem> items;
+};
+
+LaszipVlr parseLaszipVlr(shared_ptr<Buffer> buffer){
+	LaszipVlr vlr;
+
+	vlr.compressor = buffer->get<uint16_t>(0);
+	vlr.coder = buffer->get<uint16_t>(2);
+	vlr.versionMajor = buffer->get<uint8_t>(4);
+	vlr.versionMinor = buffer->get<uint8_t>(5);
+	vlr.versionRevision = buffer->get<uint16_t>(6);
+	vlr.options = buffer->get<uint32_t>(8);
+	vlr.chunkSize = buffer->get<uint32_t>(12);
+	vlr.numberOfSpecialEvlrs = buffer->get<uint64_t>(16);
+	vlr.offsetToSpecialEvlrs = buffer->get<uint64_t>(24);
+	vlr.numItems = buffer->get<uint16_t>(32);
+
+	for(int i = 0; i < vlr.numItems; i++){
+		LaszipVlrItem item = {
+			.type = buffer->get<uint16_t>(34 + i * 6 + 0),
+			.size = buffer->get<uint16_t>(34 + i * 6 + 2),
+			.version = buffer->get<uint16_t>(34 + i * 6 + 4),
+		};
+
+		vlr.items.push_back(item);
+	}
+
+	return vlr;
+}
+
 
 void initCuda(){
 	cuInit(0);
@@ -148,6 +217,8 @@ Uniforms getUniforms(shared_ptr<GLRenderer> renderer){
 	uniforms.minNodeSize            = settings.minNodeSize;
 	uniforms.pointSize              = settings.pointSize;
 	uniforms.useHighQualityShading  = settings.useHighQualityShading;
+	uniforms.numTiles               = tiles.size();
+	uniforms.numChunks              = chunks.size();
 
 	return uniforms;
 }
@@ -189,10 +260,12 @@ void renderCUDA(shared_ptr<GLRenderer> renderer){
 	int numGroups = maxActiveBlocksPerSM * numSMs;
 	
 	void* args[] = {
-		&cptr_renderbuffer,
+		&cptr_buffer,
 		&uniforms, 
 		&output_surf,
-		&cptr_stats
+		&cptr_stats,
+		&cptr_tiles, &cptr_chunks,
+		&cptr_commandsQueue, &cptr_commandsQueueCounter
 	};
 
 	auto res_launch = cuLaunchCooperativeKernel(kernel_render,
@@ -219,23 +292,73 @@ void renderCUDA(shared_ptr<GLRenderer> renderer){
 	cuGraphicsUnregisterResource(cugl_colorbuffer);
 }
 
+// void reset(){
+
+// 	int workgroupSize = 128;
+
+// 	auto& kernel = cuda_program->kernels["kernel_init"];
+
+// 	int maxActiveBlocksPerSM;
+// 	cuOccupancyMaxActiveBlocksPerMultiprocessor(&maxActiveBlocksPerSM, 
+// 		kernel, workgroupSize, 0);
+	
+// 	int numGroups = maxActiveBlocksPerSM * numSMs;
+	
+// 	void* args[] = {
+// 		&cptr_buffer,
+// 		&cptr_stats,
+// 		&cptr_tiles, &cptr_chunks,
+// 		&cptr_commandsQueue, &cptr_commandsQueueCounter
+// 	};
+
+// 	auto res_launch = cuLaunchCooperativeKernel(kernel,
+// 		numGroups, 1, 1,
+// 		workgroupSize, 1, 1,
+// 		0, 0, args);
+
+// 	if(res_launch != CUDA_SUCCESS){
+// 		const char* str; 
+// 		cuGetErrorString(res_launch, &str);
+// 		printf("error: %s \n", str);
+// 	}
+
+// }
+
 // compile kernels and allocate buffers
 void initCudaProgram(shared_ptr<GLRenderer> renderer){
 
-	uint64_t cptr_buffer_bytes       = 300'000'000;
-	uint64_t cptr_renderbuffer_bytes = 200'000'000;
+	uint64_t cptr_buffer_bytes       = 1'000'000'000;
 
 	cuMemAlloc(&cptr_buffer                , cptr_buffer_bytes);
-	cuMemAlloc(&cptr_renderbuffer          , cptr_renderbuffer_bytes);
+	// cuMemAlloc(&cptr_points                , 8'000'000'000); // ~500M Points
+	cuMemAlloc(&cptr_tiles                 , 100'000 * sizeof(Tile));    // ~5MB
+	cuMemAlloc(&cptr_chunks                , 1'000'000 * sizeof(Chunk)); // ~50MB, should be good for 50 billion points
+	cuMemAlloc(&cptr_commandsQueue         , COMMAND_QUEUE_CAPACITY * sizeof(Command)); 
+	cuMemAlloc(&cptr_commandsQueueCounter  , 8);
 	cuMemAlloc(&cptr_stats                 , sizeof(Stats));
 	cuMemAllocHost((void**)&h_stats_pinned , sizeof(Stats));
+	cuMemAllocHost((void**)&h_commandQueue_pinned, COMMAND_QUEUE_CAPACITY * sizeof(Command));
+	cuMemAllocHost((void**)&h_commandQueueCounter_pinned, 8);
+
+
+	uint64_t zero_u64 = 0;
+	cuMemcpyHtoD(cptr_commandsQueueCounter, &zero_u64, 8);
+	memcpy(h_commandQueueCounter_pinned, &zero_u64, 8);
+	
+
+	printfmt("sizeof(Tile): {} \n", sizeof(Tile));
+	printfmt("sizeof(Chunk): {} \n", sizeof(Chunk));
 
 	cuda_program = new CudaModularProgram({
 		.modules = {
 			"./modules/progressive_octree/render.cu",
 			"./modules/progressive_octree/utils.cu",
 		},
-		.kernels = {"kernel_render"}
+		.kernels = {
+			"kernel_render",
+			"kernel_init",
+			"kernel_chunkLoaded"
+		}
 	});
 
 	cuEventCreate(&ce_render_start, 0);
@@ -244,6 +367,31 @@ void initCudaProgram(shared_ptr<GLRenderer> renderer){
 	cuEventCreate(&ce_update_end, 0);
 	
 	cuGraphicsGLRegisterImage(&cugl_colorbuffer, renderer->view.framebuffer->colorAttachments[0]->handle, GL_TEXTURE_2D, CU_GRAPHICS_REGISTER_FLAGS_WRITE_DISCARD);
+
+	{ // run init cuda program
+		int workgroupSize = 128;
+		auto& kernel = cuda_program->kernels["kernel_init"];
+		int maxActiveBlocksPerSM;
+		cuOccupancyMaxActiveBlocksPerMultiprocessor(&maxActiveBlocksPerSM, kernel, workgroupSize, 0);
+		int numGroups = maxActiveBlocksPerSM * numSMs;
+		
+		void* args[] = {
+			&cptr_buffer, &cptr_stats,
+			&cptr_tiles, &cptr_chunks,
+			&cptr_commandsQueue, &cptr_commandsQueueCounter
+		};
+
+		auto res_launch = cuLaunchCooperativeKernel(kernel,
+			numGroups, 1, 1,
+			workgroupSize, 1, 1,
+			0, 0, args);
+
+		if(res_launch != CUDA_SUCCESS){
+			const char* str; 
+			cuGetErrorString(res_launch, &str);
+			printf("error: %s \n", str);
+		}
+	}
 }
 
 int main(){
@@ -257,15 +405,176 @@ int main(){
 	printfmt("cpu.numProcessors: {} \n", cpu.numProcessors);
 	printfmt("launching {} loader threads \n", numThreads);
 
-
 	renderer->controls->yaw    = -1.15;
 	renderer->controls->pitch  = -0.57;
 	renderer->controls->radius = 10.0f;
 	renderer->controls->target = {0.0f, 0.0f, 0.0f};
 
-
 	initCuda();
 	initCudaProgram(renderer);
+
+	// reset();
+
+
+	{ // test data
+
+		vector<string> files = listFiles("E:/resources/pointclouds/CA13_las");
+
+
+		float3 acc_min = { Infinity, Infinity, Infinity };
+		float3 acc_max = { -Infinity, -Infinity, -Infinity };
+
+		// for(int tileIndex = 0; tileIndex < files.size(); tileIndex++)
+		 for(int tileIndex = 0; tileIndex < min(int(files.size()), 500); tileIndex++)
+		{
+			string file = files[tileIndex];
+			
+			if(!iEndsWith(file, "las")) continue;
+
+
+			auto buffer = readBinaryFile(file, 0, 4096);
+
+			uint32_t color = tileIndex * 12345678;
+
+			uint32_t offsetToPointData = buffer->get<uint32_t>(96);
+			uint32_t offsetToPointData_fixed = offsetToPointData; // must subtract laszip vlr
+			uint32_t pointFormat = buffer->get<uint8_t>(104) % 128;
+			uint32_t offset_rgb = 0;
+			uint16_t headerSize = buffer->get<uint16_t>(94);
+			uint32_t numVLRs = buffer->get<uint32_t>(100);
+			uint32_t numPoints = buffer->get<uint32_t>(107);
+
+			{
+				//vector<VLR> vlrs;
+				uint64_t byteOffset = headerSize;
+				for (int vlr_index = 0; vlr_index < numVLRs; vlr_index++) {
+
+					uint64_t offset_vlrHeaderBuffer = byteOffset;
+
+					// let vlrHeaderBuffer = Buffer.alloc(54);
+					// await handle.read(vlrHeaderBuffer, 0, vlrHeaderBuffer.byteLength, byteOffset);
+
+					// console.log("vlr");
+
+					// let userId = parseCString(vlrHeaderBuffer.slice(2, 18));
+					int recordId = buffer->get<uint16_t>(byteOffset + 18);
+					int recordLength = buffer->get<uint16_t>(byteOffset + 20);
+					bool isLaszipVlr = recordId == 22204;
+
+					LaszipVlr vlr;
+
+					if(isLaszipVlr){
+						shared_ptr<Buffer> vlrContentBuffer = make_shared<Buffer>(recordLength);
+						memcpy(vlrContentBuffer->data, buffer->data_u8 + byteOffset + 54, recordLength);
+						vlr = parseLaszipVlr(vlrContentBuffer);
+
+						offsetToPointData_fixed = offsetToPointData_fixed - recordLength - 54;
+					}
+
+					byteOffset = byteOffset + 54 + recordLength;
+				}
+
+				//offsetToPointData = offsetToPointData_fixed;
+
+				//uint64_t chunkTableStart = buffer->get<uint64_t>(byteOffset);
+				//uint64_t chunkTableSize = fs::file_size(file) - chunkTableStart;
+				//shared_ptr<Buffer> chunkTableBuffer = readBinaryFile(file, chunkTableStart, chunkTableSize);
+
+				//uint32_t version = chunkTableBuffer->get<uint32_t>(0);
+				//uint32_t numChunks = chunkTableBuffer->get<uint32_t>(4);
+
+				// let dec = new ArithmeticDecoder(chunkTableBuffer, 8);
+				// let ic = new IntegerCompressor(dec, 32, 2);
+
+				// ByteStreamInArray* streamin = new ByteStreamInArray(data, size);
+				// ArithmeticDecoder dc;
+				// IntegerCompressor ic;
+
+			}
+
+			if(pointFormat == 2) offset_rgb = 20;
+			if(pointFormat == 3) offset_rgb = 28;
+
+			if(offsetToPointData < 4000){
+				int R = buffer->get<uint16_t>(offsetToPointData + offset_rgb + 0);
+				int G = buffer->get<uint16_t>(offsetToPointData + offset_rgb + 2);
+				int B = buffer->get<uint16_t>(offsetToPointData + offset_rgb + 4);
+
+				int r = R < 256 ? R : R / 256;
+				int g = G < 256 ? G : G / 256;
+				int b = B < 256 ? B : B / 256;
+
+				color = r | (g << 8) | (b << 16);
+			}
+
+			float3 bbm = {734074.53, 3889472.73, 236.21};
+
+			Tile tile;
+			tile.min = float3{
+				float(buffer->get<double>(187)) - bbm.x,
+				float(buffer->get<double>(203)) - bbm.y,
+				float(buffer->get<double>(219)) - bbm.z
+			};
+			tile.max = float3{
+				float(buffer->get<double>(179)) - bbm.x,
+				float(buffer->get<double>(195)) - bbm.y,
+				float(buffer->get<double>(211)) - bbm.z
+			};
+
+			acc_min.x = min(acc_min.x, tile.min.x);
+			acc_min.y = min(acc_min.y, tile.min.y);
+			acc_min.z = min(acc_min.z, tile.min.z);
+			acc_max.x = max(acc_max.x, tile.max.x);
+			acc_max.y = max(acc_max.y, tile.max.y);
+			acc_max.z = max(acc_max.z, tile.max.z);
+
+			tile.color = color;
+			tile.numPoints = numPoints;
+			tile.numPointsLoaded = 0;
+			tile.state = STATE_EMPTY;
+
+			tiles.push_back(tile);
+			tilePaths.push_back(file);
+
+			int chunkSize = 50'000;
+			int numChunks = (numPoints + chunkSize - 1) / chunkSize;
+
+			for(int chunkIndex = 0; chunkIndex < numChunks; chunkIndex++){
+				Chunk chunk;
+				chunk.min = tile.min;
+				chunk.max = tile.max;
+				chunk.chunkIndex = chunkIndex;
+				chunk.color = 0x000000ff;
+				chunk.tileID = tileIndex;
+				chunk.numPoints = min(numPoints - (chunkIndex * chunkSize), uint32_t(chunkSize));
+				chunk.numPointsLoaded = 0;
+				chunk.state = STATE_EMPTY;
+				
+				chunks.push_back(chunk);
+			}
+		}
+
+		float3 diff = {
+			acc_max.x - acc_min.x,
+			acc_max.y - acc_min.y,
+			acc_max.z - acc_min.z
+		};
+		float dist = sqrt(diff.x * diff.x + diff.y * diff.y + diff.z * diff.z);
+		// renderer->controls->yaw = -1.15;
+		// renderer->controls->pitch = -0.57;
+		// renderer->controls->radius = dist;
+		// renderer->controls->target = { 0.0f, 0.0f, 0.0f };
+
+		// position: -5211.866471289627, 6055.16800899788, 839.9523127266993 
+		renderer->controls->yaw    = 0.640;
+		renderer->controls->pitch  = -0.305;
+		renderer->controls->radius = 13128.778;
+		renderer->controls->target = { -13052.313, 16099.689, -2322.296, };
+
+		cuMemcpyHtoD(cptr_tiles, tiles.data(), tiles.size() * sizeof(Tile));
+		cuMemcpyHtoD(cptr_chunks, chunks.data(), chunks.size() * sizeof(Chunk));
+
+	}
 
 	renderer->onFileDrop([&](vector<string> files){
 		//vector<string> pointCloudFiles;
@@ -297,6 +606,130 @@ int main(){
 	auto update = [&](){
 		renderer->camera->fovy = settings.fovy;
 		renderer->camera->update();
+
+
+		// check pending command loads
+		for(int i = 0; i < pendingCommandLoads.size(); i++){
+
+			auto& pending = pendingCommandLoads.front();
+
+			bool eventFinished = cuEventQuery(pending.ce_ranges_loaded) == CUDA_SUCCESS;
+
+			if(eventFinished){
+				pendingCommandLoads.pop_front();
+				cuEventDestroy(pending.ce_ranges_loaded);
+
+				printfmt("loaded {} to {} \n", pending.start_0, pending.end_0);
+				if(pending.start_1 != pending.end_1){
+					printfmt("also loaded {} to {} \n", pending.start_1, pending.end_1);
+				}
+
+
+				// now let's check out these commands
+				for(int commandIndex = pending.start_0; commandIndex < pending.end_0; commandIndex++){
+					Command* commands = (Command*)h_commandQueue_pinned;
+
+					Command* command = &commands[commandIndex % COMMAND_QUEUE_CAPACITY];
+					
+					if(command->command == CMD_READ_CHUNK){
+						CommandReadChunkData* data = (CommandReadChunkData*)command->data;
+
+						printfmt("tileID: {}, chunkID: {} \n", data->tileID, data->chunkIndex);
+
+						Task_LoadChunk task;
+						task.tileID = data->tileID;
+						task.chunkID = data->chunkID;
+						task.chunkIndex = data->chunkIndex;
+
+						lock_guard<mutex> lock(mtx_loadChunk);
+						tasks_loadChunk.push_back(task);
+					}
+					
+
+					printfmt("Command: command = {} \n", command->command);
+
+					break;
+				}
+
+
+
+			}else{
+				// pending events should finish in sequence, so if we encounter one that has not finished,
+				// we can stop checking the other ones.
+				break;
+			}
+
+		}
+
+
+
+		// load one chunk from the task queue. This should be converted to a parallel approach
+		if(tasks_loadChunk.size() > 0){
+			Task_LoadChunk task = tasks_loadChunk.front();
+			tasks_loadChunk.pop_front();
+
+			Tile tile = tiles[task.tileID];
+			Chunk chunk = chunks[task.chunkID];
+			string file = tilePaths[task.tileID];
+
+			uint32_t firstPoint = task.chunkIndex * 50'000;
+			uint32_t numPoints = min((tile.numPoints - firstPoint), 50'000u);
+
+			// vector<Point> points = readPoints(file, firstPoint, numPoints);
+
+			LasHeader header = loadHeader(file);
+			auto buffer = make_shared<Buffer>(header.bytesPerPoint * numPoints);
+
+			double translation[3] = {-header.min[0], -header.min[1], -header.min[2]};
+			loadLasNative(file, header, firstPoint, numPoints, buffer->data, translation);
+
+			CUdeviceptr cptr_batch;
+			cuMemAlloc(&cptr_batch, 50'000 * sizeof(Point));
+			cuMemcpyHtoD(cptr_batch, buffer->data, numPoints * sizeof(Point));
+
+
+			{ // invoke chunkLoaded kernel with a single thread
+				int workgroupSize = 1;
+				auto& kernel = cuda_program->kernels["kernel_chunkLoaded"];
+				int maxActiveBlocksPerSM;
+				cuOccupancyMaxActiveBlocksPerMultiprocessor(&maxActiveBlocksPerSM, kernel, workgroupSize, 0);
+				int numGroups = maxActiveBlocksPerSM * numSMs;
+				
+
+				uint32_t chunkIndex = chunk.chunkIndex;
+				uint64_t ptr_points = (uint64_t)cptr_batch;
+
+				Point point;
+				point.x = buffer->get<float>(0);
+				point.y = buffer->get<float>(4);
+				point.z = buffer->get<float>(8);
+
+				printfmt("[host] chunkIndex = {} \n", chunkIndex);
+				printfmt("[host] cptr_batch = {} \n", ptr_points);
+				printfmt("[host] xyz: {:.1f}, {:.1f}, {:.1f} \n", point.x, point.y, point.z);
+
+				void* args[] = {
+					&chunkIndex, &ptr_points, &cptr_tiles, &cptr_chunks
+				};
+
+				auto res_launch = cuLaunchCooperativeKernel(kernel,
+					1, 1, 1,
+					1, 1, 1,
+					0, 0, args);
+
+				if(res_launch != CUDA_SUCCESS){
+					const char* str; 
+					cuGetErrorString(res_launch, &str);
+					printf("error: %s \n", str);
+				}
+			
+			}
+
+
+
+		}
+		
+
 	};
 
 	auto render = [&](){
@@ -321,7 +754,225 @@ int main(){
 			cuMemcpyDtoHAsync(h_stats_pinned, cptr_stats, sizeof(Stats), ((CUstream)CU_STREAM_DEFAULT));
 			memcpy(&stats, h_stats_pinned, sizeof(Stats));
 
+			cuMemcpyDtoHAsync(h_commandQueueCounter_pinned, cptr_commandsQueueCounter, 8, ((CUstream)CU_STREAM_DEFAULT));
+
+			uint64_t commandQueueCounter = *((uint64_t*)h_commandQueueCounter_pinned);
+			uint64_t commandsToLoadFromDevice = commandQueueCounter - commandsLoadedFromDevice;
+
+			if(commandsToLoadFromDevice > 0){
+
+				CUevent ce_ranges_loaded;
+				cuEventCreate(&ce_ranges_loaded, 0);
+				
+
+				// command queue is a ring buffer, so we may have to load two individual ranges
+				uint64_t start_0 = commandsLoadedFromDevice % COMMAND_QUEUE_CAPACITY;
+				uint64_t end_0 = commandsLoadedFromDevice + commandsToLoadFromDevice;
+				uint64_t start_1 = 0;
+				uint64_t end_1 = 0;
+
+				if(end_0 > COMMAND_QUEUE_CAPACITY){
+					start_1 = 0;
+					end_1 = end_0 % COMMAND_QUEUE_CAPACITY;
+					end_0 = COMMAND_QUEUE_CAPACITY;
+				}
+
+				cuMemcpyDtoHAsync(
+					((uint8_t*)h_commandQueue_pinned) + start_0 * sizeof(Command), 
+					cptr_commandsQueue + start_0 * sizeof(Command), 
+					(end_0 - start_0) * sizeof(Command), 
+					((CUstream)CU_STREAM_DEFAULT));
+
+				if(start_1 != end_1){
+					cuMemcpyDtoHAsync(
+						((uint8_t*)h_commandQueue_pinned) + start_1 * sizeof(Command), 
+						cptr_commandsQueue + start_1 * sizeof(Command), 
+						(end_1 - start_1) * sizeof(Command), 
+						((CUstream)CU_STREAM_DEFAULT));
+				}
+
+				cuEventRecord(ce_ranges_loaded, 0);
+
+				PendingCommandLoad pending;
+				pending.start_0 = start_0;
+				pending.end_0 = end_0;
+				pending.start_1 = start_1;
+				pending.end_1 = end_1;
+				pending.ce_ranges_loaded = ce_ranges_loaded;
+
+				pendingCommandLoads.push_back(pending);
+
+
+				 printfmt("load {} to {} \n", start_0, end_0);
+				 if(start_1 != end_1){
+				 	printfmt("also load {} to {} \n", start_1, end_1);
+				 }
+
+				commandsLoadedFromDevice = commandQueueCounter;
+			}
+
+			
+
+
+
 			statsAge = static_cast<int>(renderer->frameCount) - stats.frameID;
+		}
+
+		{ // DRAW GUI
+
+			if(Runtime::showGUI)
+			{ // RENDER IMGUI SETTINGS WINDOW
+
+				auto windowSize = ImVec2(490, 280);
+				ImGui::SetNextWindowPos(ImVec2(10, 300));
+				ImGui::SetNextWindowSize(windowSize);
+
+				ImGui::Begin("Settings");
+				
+				// ImGui::Checkbox("Show Bounding Box",     &settings.showBoundingBox);
+
+				ImGui::Checkbox("Update Visibility",     &settings.doUpdateVisibility);
+
+				if(ImGui::Button("Copy Camera")){
+					auto controls = renderer->controls;
+					auto pos = controls->getPosition();
+					auto target = controls->target;
+
+					stringstream ss;
+					ss<< std::setprecision(2) << std::fixed;
+					ss << format("// position: {}, {}, {} \n", pos.x, pos.y, pos.z);
+					ss << format("renderer->controls->yaw    = {:.3f};\n", controls->yaw);
+					ss << format("renderer->controls->pitch  = {:.3f};\n", controls->pitch);
+					ss << format("renderer->controls->radius = {:.3f};\n", controls->radius);
+					ss << format("renderer->controls->target = {{ {:.3f}, {:.3f}, {:.3f}, }};\n", target.x, target.y, target.z);
+
+					string str = ss.str();
+					
+					#ifdef _WIN32
+						toClipboard(str);
+					#endif
+				}
+
+				ImGui::End();
+			}
+
+			if(Runtime::showGUI)
+			{ // RENDER IMGUI STATS WINDOW
+
+				auto windowSize = ImVec2(490, 440);
+				ImGui::SetNextWindowPos(ImVec2(10, 590));
+				ImGui::SetNextWindowSize(windowSize);
+
+				ImGui::Begin("Stats");
+
+				{ // used/total mem progress
+					size_t availableMem = 0;
+					size_t totalMem = 0;
+					cuMemGetInfo(&availableMem, &totalMem);
+					size_t unavailableMem = totalMem - availableMem;
+
+					string strProgress = format("{:3.1f} / {:3.1f}", 
+						double(unavailableMem) / 1'000'000'000.0, 
+						double(totalMem) / 1'000'000'000.0
+					);
+					float progress = static_cast<float>(static_cast<double>(unavailableMem) / static_cast<double>(totalMem));
+					ImGui::ProgressBar(progress, ImVec2(0.f, 0.f), strProgress.c_str());
+					ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
+					ImGui::Text("Used GPU Memory");
+				}
+
+				auto locale = getSaneLocale();
+
+				auto toMS = [locale](double millies){
+					string str = "-";
+
+					if(millies > 0.0){
+						str = format("{:.1Lf} ms", millies);
+					}
+
+					return leftPad(str, 15);
+				};
+
+				auto toM = [locale](double number){
+					string str = format(locale, "{:.1Lf} M", number / 1'000'000.0);
+					return leftPad(str, 14);
+				};
+
+				auto toB = [locale](double number) {
+					string str = format(locale, "{:.1Lf} B", number / 1'000'000'000.0);
+					return leftPad(str, 14);
+				};
+
+				auto toMB = [locale](double number){
+					string str = format(locale, "{:.1Lf} MB", number / 1'000'000.0);
+					return leftPad(str, 15);
+				};
+				auto toGB = [locale](double number){
+					string str = format(locale, "{:.1Lf} GB", number / 1'000'000'000.0);
+					return leftPad(str, 15);
+				};
+
+				auto toIntString = [locale](double number){
+					string str = format(locale, "{:L}", number);
+					return leftPad(str, 10);
+				};
+
+				double M = 1'000'000.0;
+				double B = 1'000'000'000.0;
+				double MB = 1'000'000.0; // TIL: MB = 1'000'000 vs. MiB = 1024 * 1024
+				double GB = 1'000'000'000.0;
+
+				uint64_t commandQueueCounter = *((uint64_t*)h_commandQueueCounter_pinned);
+
+				vector<vector<string>> table = {
+					{"test  ", toMS(123.0f)   , format("{:.1f}", 123.0f)},
+					{"commandQueueCounter  ", toIntString(commandQueueCounter)   , format("{:.1f}", 123.0f)}
+				};
+
+				if (ImGui::Button("Copy Stats")) {
+					stringstream ss;
+					for (int row = 0; row < table.size(); row++) {
+						for (int column = 0; column < 2; column++) {
+							ss << table[row][column];
+						}
+						ss << "\n";
+					}
+
+					string str = ss.str();
+					toClipboard(str);
+				}
+
+				auto flags = ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV;
+				if (ImGui::BeginTable("table1", 3, flags)) {
+					ImGui::TableSetupColumn("AAA", ImGuiTableColumnFlags_WidthStretch);
+					ImGui::TableSetupColumn("BBB", ImGuiTableColumnFlags_WidthStretch);
+					ImGui::TableSetupColumn("CCC", ImGuiTableColumnFlags_WidthFixed);
+					for (int row = 0; row < table.size(); row++) {
+						ImGui::TableNextRow();
+						for (int column = 0; column < 2; column++) {
+							ImGui::TableSetColumnIndex(column);
+
+							ImGui::Text(table[row][column].c_str());
+						}
+
+						ImGui::PushID(row);
+
+						ImGui::TableSetColumnIndex(2);
+						if (ImGui::SmallButton("c")) {
+							string str = table[row][2];
+							toClipboard(str);
+						}
+
+						ImGui::PopID();
+					}
+					ImGui::EndTable();
+				}
+
+
+				ImGui::End();
+			}
+
+		
 		}
 
 		frameCounter++;
