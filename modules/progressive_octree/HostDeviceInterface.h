@@ -104,7 +104,10 @@ struct Chunk{
 	float3 max; 
 	uint32_t tileID;
 	uint32_t chunkIndex; // within tile
-	uint32_t color;
+	union{
+		uint32_t color;
+		uint8_t rgba[4];
+	};
 	uint32_t numPoints; 
 	uint32_t numPointsLoaded;
 	uint32_t state;

@@ -161,6 +161,56 @@ void toScreen(float3 boxMin, float3 boxMax, float2& screen_min, float2& screen_m
 	screen_max.y = smax_y;
 }
 
+void rasterizeChunk(
+	Chunk* chunk, 
+	uint64_t* target, 
+	float width, float height, 
+	mat4 transform
+){
+
+	processRange(chunk->numPoints, [&](int index){
+
+		Point point = chunk->points[index];
+
+		point.x += chunk->min.x;
+		point.y += chunk->min.y;
+		point.z += chunk->min.z;
+
+		float4 ndc = transform * float4{point.x, point.y, point.z, 1.0f};
+
+		ndc.x = ndc.x / ndc.w;
+		ndc.y = ndc.y / ndc.w;
+		ndc.z = ndc.z / ndc.w;
+		float depth = ndc.w;
+
+		int x = (ndc.x * 0.5 + 0.5) * width;
+		int y = (ndc.y * 0.5 + 0.5) * height;
+
+		if(x > 1 && x < width  - 2.0)
+		if(y > 1 && y < height - 2.0){
+
+			// SINGLE PIXEL
+			uint32_t pixelID = x + int(width) * y;
+			uint64_t udepth = *((uint32_t*)&depth);
+			uint64_t encoded = (udepth << 32) | point.color;
+
+			atomicMin(&target[pixelID], encoded);
+
+			// POINT SPRITE
+			// for(int ox : {-2, -1, 0, 1, 2})
+			// for(int oy : {-2, -1, 0, 1, 2}){
+			// 	uint32_t pixelID = (x + ox) + int(uniforms.width) * (y + oy);
+			// 	uint64_t udepth = *((uint32_t*)&depth);
+			// 	uint64_t encoded = (udepth << 32) | point.color;
+
+			// 	atomicMin(&target[pixelID], encoded);
+			// }
+		}
+
+	});
+
+}
+
 extern "C" __global__
 void kernel_init(
 	uint32_t* buffer,
@@ -182,30 +232,115 @@ void kernel_init(
 	// });
 }
 
+// from: https://stackoverflow.com/a/51549250
+// TODO: License
+__forceinline__ float atomicMinFloat(float * addr, float value) {
+	float old;
+	old = (value >= 0) ? 
+		__int_as_float(atomicMin((int *)addr, __float_as_int(value))) :
+		__uint_as_float(atomicMax((unsigned int *)addr, __float_as_uint(value)));
+
+	return old;
+}
+
+// from: https://stackoverflow.com/a/51549250
+// TODO: License
+__forceinline__ float atomicMaxFloat(float * addr, float value) {
+	float old;
+	old = (value >= 0) ?
+		__int_as_float(atomicMax((int *)addr, __float_as_int(value))) :
+		__uint_as_float(atomicMin((unsigned int *)addr, __float_as_uint(value)));
+
+	return old;
+}
 
 extern "C" __global__
 void kernel_chunkLoaded(
+	uint32_t* buffer,
 	const uint32_t chunkIndex,
+	const uint32_t chunkID,
 	uint64_t ptr_points,
 	Tile* tiles, Chunk* chunks
 ){
-	// Allocator _allocator(buffer, 0);
-	// allocator = &_allocator;
 
-	// Data* data = allocateStuff(buffer);
+	auto grid = cg::this_grid();
+	Allocator _allocator(buffer, 0);
+	allocator = &_allocator;
 
-	Chunk& chunk = chunks[chunkIndex];
+	Data* data = allocateStuff(buffer);
+
+	uint32_t* sumColors = allocator->alloc2<uint32_t>(4);
+
+	Chunk& chunk = chunks[chunkID];
 	chunk.state = STATE_LOADED;
 	memcpy(&chunk.points, &ptr_points, 8);
 
-	printf("[kernel] chunk loaded!\n");
-	printf("[kernel] chunkIndex: %u \n", chunkIndex);
-	printf("[kernel] ptr_points: %llu \n", ptr_points);
+	float3 min = chunk.min;
+	
+	grid.sync();
+	if(grid.thread_rank() == 0){
+		chunk.min = {Infinity, Infinity, Infinity};
+		chunk.max = {-Infinity, -Infinity, -Infinity};
+		sumColors[0] = 0;
+		sumColors[1] = 0;
+		sumColors[2] = 0;
+		sumColors[3] = 0;
+	}
 
-	Point point = chunk.points[0];
+	grid.sync();
 
-	printf("[kernel] xyz: %.1f, %.1f, %.1f \n", point.x, point.y, point.z);
-	printf("huh?\n");
+	processRange(chunk.numPoints, [&](int index){
+		Point point = chunk.points[index];
+
+		atomicMinFloat(&chunk.min.x, point.x + min.x);
+		atomicMinFloat(&chunk.min.y, point.y + min.y);
+		atomicMinFloat(&chunk.min.z, point.z + min.z);
+		atomicMaxFloat(&chunk.max.x, point.x + min.x);
+		atomicMaxFloat(&chunk.max.y, point.y + min.y);
+		atomicMaxFloat(&chunk.max.z, point.z + min.z);
+
+		atomicAdd(&sumColors[0], uint32_t(point.rgba[0]));
+		atomicAdd(&sumColors[1], uint32_t(point.rgba[1]));
+		atomicAdd(&sumColors[2], uint32_t(point.rgba[2]));
+		atomicAdd(&sumColors[3], 1u);
+	});
+
+	grid.sync();
+
+	if(grid.thread_rank() == 0){
+		// printf("old min: (%.1f, %.1f, %.1f), new: (%.1f, %.1f, %.1f) \n", 
+		// 	min.x, min.y, min.z,
+		// 	chunk.min.x, chunk.min.y, chunk.min.z
+		// );
+
+		chunk.rgba[0] = sumColors[0] / sumColors[3];
+		chunk.rgba[1] = sumColors[1] / sumColors[3];
+		chunk.rgba[2] = sumColors[2] / sumColors[3];
+	}
+
+	processRange(chunk.numPoints, [&](int index){
+		Point point = chunk.points[index];
+
+		point.x = point.x + min.x - chunk.min.x;
+		point.y = point.y + min.y - chunk.min.y;
+		point.z = point.z + min.z - chunk.min.z;
+
+		chunk.points[index] = point;
+
+	});
+
+	grid.sync();
+
+
+	// printf("[kernel] chunk loaded!\n");
+	// printf("[kernel] chunkIndex: %u \n", chunkIndex);
+	// printf("[kernel] chunkID: %u \n", chunkID);
+	// printf("[kernel] ptr_points: %llu \n", ptr_points);
+
+	// Point point = chunk.points[0];
+
+	// printf("[kernel] xyz: %.1f, %.1f, %.1f \n", point.x, point.y, point.z);
+	// printf("huh?\n");
 }
 
 
@@ -291,12 +426,15 @@ void kernel_render(
 			float d = sqrt(screen_center_x * screen_center_x + screen_center_y * screen_center_y);
 
 			// float w = clamp(1.0f - d, 0.0f, 1.0f);
-			float w = exp(-d * d / 0.20f);
+			float w = exp(-d * d / 0.150f);
 			float w2 = w * dx * dy;
 
 			tile.isHighlyVisible = w2 > 20000;
+			// tile.isHighlyVisible = false;
 
-			// drawBox(triangles, pos, size, tile.color);
+			if(!tile.isHighlyVisible){
+				drawBox(triangles, pos, size, tile.color);
+			}
 		}
 	}
 
@@ -330,20 +468,21 @@ void kernel_render(
 		bool isHighlyVisible = w2 > 20000;
 
 		float3 pos = {
-			tile.min.x * 0.5 + tile.max.x * 0.5,
-			tile.min.y * 0.5 + tile.max.y * 0.5,
-			tile.min.z * 0.5 + tile.max.z * 0.5
+			chunk.min.x * 0.5 + chunk.max.x * 0.5,
+			chunk.min.y * 0.5 + chunk.max.y * 0.5,
+			chunk.min.z * 0.5 + chunk.max.z * 0.5
 		};
 		float3 size = float3{
-			tile.max.x - tile.min.x,
-			tile.max.y - tile.min.y,
-			tile.max.z - tile.min.z
+			chunk.max.x - chunk.min.x,
+			chunk.max.y - chunk.min.y,
+			chunk.max.z - chunk.min.z
 		} * 0.5f;
 
-		if(chunk.state == STATE_LOADED)
+		if(chunk.state == STATE_LOADED && chunk.chunkIndex % 1 == 0)
 		{
 			uint32_t boxColor = 0x0000ff00;
-			drawBoundingBox(data->lines, pos, 2.05f * size, boxColor);
+			// drawBoundingBox(data->lines, pos, 2.05f * size, boxColor);
+			// drawBox(data->triangles, pos, size, chunk.color);
 		}
 
 		if(tile.isHighlyVisible){
@@ -352,7 +491,7 @@ void kernel_render(
 			if(chunk.state == STATE_LOADED){
 				boxColor = 0x0000ff00;
 			}
-			drawBoundingBox(data->lines, pos, 2.02f * size, boxColor);
+			// drawBoundingBox(data->lines, pos, 2.02f * size, boxColor);
 
 			if(chunk.state == STATE_EMPTY){
 				// LOAD CHUNK!
@@ -383,26 +522,52 @@ void kernel_render(
 
 					chunk.state = STATE_LOADING;
 				}
-
-
-				
 			}
+		}else{
+
+			// if(chunk.chunkIndex == 0)
+			// {
+			// 	drawBoundingBox(data->lines, pos, 2.02f * size, 0x000000ff);
+			// 	drawBox(data->triangles, pos, size, tile.color);
+			// }
 		}
 
 	});
 
 	grid.sync();
 
-	// processRange(uniforms.numChunks, [&](int chunkIndex){
+	uint32_t* numChunksVisible = allocator->alloc2<uint32_t>(1);
+	Chunk* visibleChunks = allocator->alloc2<Chunk>(1'000'000);
 
-	// 	Chunk& chunk = chunks[chunkIndex];
-	// 	Tile& tile = tiles[chunk.tileID];
+	if(grid.thread_rank() == 0){
+		*numChunksVisible = 0;
+	}
 
-	// 	if(chunk.state == STATE_LOADED){
-	// 		rasterizePoints(chunk.points, chunk.numPoints, framebuffer, uniforms.width, uniforms.height, uniforms.transform);
-	// 	}
+	grid.sync();
 
-	// });
+	processRange(uniforms.numChunks, [&](int chunkIndex){
+
+		Chunk& chunk = chunks[chunkIndex];
+		Tile& tile = tiles[chunk.tileID];
+
+		if(chunk.state == STATE_LOADED){
+			uint32_t index = atomicAdd(numChunksVisible, 1);
+			visibleChunks[index] = chunk;
+			// rasterizePoints(chunk.points, chunk.numPoints, framebuffer, uniforms.width, uniforms.height, uniforms.transform);
+		}
+
+	});
+
+	grid.sync();
+
+	// if(grid.thread_rank() == 0){
+	// 	printf("*numChunksVisible: %i\n", *numChunksVisible);
+	// }
+
+	for(int i = 0; i < *numChunksVisible; i++){
+		Chunk chunk = visibleChunks[i];
+		rasterizeChunk(&chunk, framebuffer, uniforms.width, uniforms.height, uniforms.transform);
+	}
 
 	grid.sync();
 

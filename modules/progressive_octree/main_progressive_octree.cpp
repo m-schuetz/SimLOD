@@ -85,8 +85,18 @@ struct Task_LoadChunk{
 	int chunkIndex; // within tile
 	int chunkID;
 };
+struct Task_UploadChunk {
+	int tileID;
+	int chunkIndex;
+	int chunkID;
+	shared_ptr<Buffer> points;
+	int numPoints;
+};
+
 deque<Task_LoadChunk> tasks_loadChunk;
+deque<Task_UploadChunk> tasks_uploadChunk;
 mutex mtx_loadChunk;
+mutex mtx_uploadChunk;
 
 struct {
 	bool useHighQualityShading       = false;
@@ -394,6 +404,62 @@ void initCudaProgram(shared_ptr<GLRenderer> renderer){
 	}
 }
 
+void spawnLoader(){
+
+	thread t([&](){
+
+		while (true) {
+
+			mtx_loadChunk.lock();
+			
+			if(tasks_loadChunk.size() > 0){
+
+				// Retrieve Load Task
+				Task_LoadChunk task = tasks_loadChunk.front();
+				tasks_loadChunk.pop_front();
+
+				mtx_loadChunk.unlock();
+
+				// Load chunk data
+				Tile tile = tiles[task.tileID];
+				Chunk chunk = chunks[task.chunkID];
+				string file = tilePaths[task.tileID];
+
+				uint32_t firstPoint = task.chunkIndex * 50'000;
+				int numPoints = min((tile.numPoints - firstPoint), 50'000u);
+
+				LasHeader header = loadHeader(file);
+				auto buffer = make_shared<Buffer>(header.bytesPerPoint * numPoints);
+
+				double translation[3] = {-header.min[0], -header.min[1], -header.min[2]};
+				loadLasNative(file, header, firstPoint, numPoints, buffer->data, translation);
+
+				// Create Upload Task
+				Task_UploadChunk task_upload = {
+					.tileID = task.tileID,
+					.chunkIndex = task.chunkIndex,
+					.chunkID = task.chunkID,
+					.points = buffer,
+					.numPoints = numPoints,
+				};
+
+				mtx_uploadChunk.lock();
+				tasks_uploadChunk.push_back(task_upload);
+				mtx_uploadChunk.unlock();
+				
+			}else{
+				mtx_loadChunk.unlock();
+			}
+
+			this_thread::sleep_for(1ms);
+		}
+		
+	});
+
+	t.detach();
+
+}
+
 int main(){
 
 	auto renderer = make_shared<GLRenderer>();
@@ -412,6 +478,11 @@ int main(){
 
 	initCuda();
 	initCudaProgram(renderer);
+
+	int numUploaders = 16;
+	for(int i = 0; i < numUploaders; i++){
+		spawnLoader();
+	}
 
 	// reset();
 
@@ -565,11 +636,11 @@ int main(){
 		// renderer->controls->radius = dist;
 		// renderer->controls->target = { 0.0f, 0.0f, 0.0f };
 
-		// position: -5211.866471289627, 6055.16800899788, 839.9523127266993 
-		renderer->controls->yaw    = 0.640;
-		renderer->controls->pitch  = -0.305;
-		renderer->controls->radius = 13128.778;
-		renderer->controls->target = { -13052.313, 16099.689, -2322.296, };
+		// position: -7449.509369996216, 7225.290090406565, 1250.6768786203359 
+		renderer->controls->yaw    = 0.543;
+		renderer->controls->pitch  = -0.647;
+		renderer->controls->radius = 5061.712;
+		renderer->controls->target = { -10062.763, 10682.825, -1364.143, };
 
 		cuMemcpyHtoD(cptr_tiles, tiles.data(), tiles.size() * sizeof(Tile));
 		cuMemcpyHtoD(cptr_chunks, chunks.data(), chunks.size() * sizeof(Chunk));
@@ -619,12 +690,6 @@ int main(){
 				pendingCommandLoads.pop_front();
 				cuEventDestroy(pending.ce_ranges_loaded);
 
-				printfmt("loaded {} to {} \n", pending.start_0, pending.end_0);
-				if(pending.start_1 != pending.end_1){
-					printfmt("also loaded {} to {} \n", pending.start_1, pending.end_1);
-				}
-
-
 				// now let's check out these commands
 				for(int commandIndex = pending.start_0; commandIndex < pending.end_0; commandIndex++){
 					Command* commands = (Command*)h_commandQueue_pinned;
@@ -634,8 +699,6 @@ int main(){
 					if(command->command == CMD_READ_CHUNK){
 						CommandReadChunkData* data = (CommandReadChunkData*)command->data;
 
-						printfmt("tileID: {}, chunkID: {} \n", data->tileID, data->chunkIndex);
-
 						Task_LoadChunk task;
 						task.tileID = data->tileID;
 						task.chunkID = data->chunkID;
@@ -644,15 +707,7 @@ int main(){
 						lock_guard<mutex> lock(mtx_loadChunk);
 						tasks_loadChunk.push_back(task);
 					}
-					
-
-					printfmt("Command: command = {} \n", command->command);
-
-					break;
 				}
-
-
-
 			}else{
 				// pending events should finish in sequence, so if we encounter one that has not finished,
 				// we can stop checking the other ones.
@@ -661,72 +716,121 @@ int main(){
 
 		}
 
+		{// upload chunks that finished loading from file
 
-
-		// load one chunk from the task queue. This should be converted to a parallel approach
-		if(tasks_loadChunk.size() > 0){
-			Task_LoadChunk task = tasks_loadChunk.front();
-			tasks_loadChunk.pop_front();
-
-			Tile tile = tiles[task.tileID];
-			Chunk chunk = chunks[task.chunkID];
-			string file = tilePaths[task.tileID];
-
-			uint32_t firstPoint = task.chunkIndex * 50'000;
-			uint32_t numPoints = min((tile.numPoints - firstPoint), 50'000u);
-
-			// vector<Point> points = readPoints(file, firstPoint, numPoints);
-
-			LasHeader header = loadHeader(file);
-			auto buffer = make_shared<Buffer>(header.bytesPerPoint * numPoints);
-
-			double translation[3] = {-header.min[0], -header.min[1], -header.min[2]};
-			loadLasNative(file, header, firstPoint, numPoints, buffer->data, translation);
-
-			CUdeviceptr cptr_batch;
-			cuMemAlloc(&cptr_batch, 50'000 * sizeof(Point));
-			cuMemcpyHtoD(cptr_batch, buffer->data, numPoints * sizeof(Point));
-
-
-			{ // invoke chunkLoaded kernel with a single thread
-				int workgroupSize = 1;
-				auto& kernel = cuda_program->kernels["kernel_chunkLoaded"];
-				int maxActiveBlocksPerSM;
-				cuOccupancyMaxActiveBlocksPerMultiprocessor(&maxActiveBlocksPerSM, kernel, workgroupSize, 0);
-				int numGroups = maxActiveBlocksPerSM * numSMs;
-				
-
-				uint32_t chunkIndex = chunk.chunkIndex;
-				uint64_t ptr_points = (uint64_t)cptr_batch;
-
-				Point point;
-				point.x = buffer->get<float>(0);
-				point.y = buffer->get<float>(4);
-				point.z = buffer->get<float>(8);
-
-				printfmt("[host] chunkIndex = {} \n", chunkIndex);
-				printfmt("[host] cptr_batch = {} \n", ptr_points);
-				printfmt("[host] xyz: {:.1f}, {:.1f}, {:.1f} \n", point.x, point.y, point.z);
-
-				void* args[] = {
-					&chunkIndex, &ptr_points, &cptr_tiles, &cptr_chunks
-				};
-
-				auto res_launch = cuLaunchCooperativeKernel(kernel,
-					1, 1, 1,
-					1, 1, 1,
-					0, 0, args);
-
-				if(res_launch != CUDA_SUCCESS){
-					const char* str; 
-					cuGetErrorString(res_launch, &str);
-					printf("error: %s \n", str);
-				}
+			mtx_uploadChunk.lock();
 			
+			if(tasks_uploadChunk.size() > 0){
+				Task_UploadChunk task = tasks_uploadChunk.front();
+				tasks_uploadChunk.pop_front();
+
+				mtx_uploadChunk.unlock();
+
+				Tile tile = tiles[task.tileID];
+				Chunk chunk = chunks[task.chunkID];
+				string file = tilePaths[task.tileID];
+
+				auto buffer = task.points;
+
+				CUdeviceptr cptr_batch;
+				cuMemAlloc(&cptr_batch, 50'000 * sizeof(Point));
+				cuMemcpyHtoD(cptr_batch, buffer->data, task.numPoints * sizeof(Point));
+
+				{ // invoke chunkLoaded kernel 
+					int workgroupSize = 128;
+					auto& kernel = cuda_program->kernels["kernel_chunkLoaded"];
+					int maxActiveBlocksPerSM;
+					cuOccupancyMaxActiveBlocksPerMultiprocessor(&maxActiveBlocksPerSM, kernel, workgroupSize, 0);
+					int numGroups = maxActiveBlocksPerSM * numSMs;
+					
+					uint32_t chunkIndex = chunk.chunkIndex;
+					uint32_t chunkID = task.chunkID;
+					uint64_t ptr_points = (uint64_t)cptr_batch;
+
+					Point point;
+					point.x = buffer->get<float>(0);
+					point.y = buffer->get<float>(4);
+					point.z = buffer->get<float>(8);
+
+					void* args[] = {
+						&cptr_buffer,
+						&chunkIndex, &chunkID, &ptr_points, &cptr_tiles, &cptr_chunks
+					};
+
+					auto res_launch = cuLaunchCooperativeKernel(kernel,
+						numGroups, 1, 1,
+						workgroupSize, 1, 1,
+						0, 0, args);
+
+					if(res_launch != CUDA_SUCCESS){
+						const char* str; 
+						cuGetErrorString(res_launch, &str);
+						printf("error: %s \n", str);
+					}
+				
+				}
+
+
+			}else{
+				mtx_uploadChunk.unlock();
+
+				
 			}
 
+			if(tasks_loadChunk.size() > 0){
+				// Task_LoadChunk task = tasks_loadChunk.front();
+				// tasks_loadChunk.pop_front();
 
+				// Tile tile = tiles[task.tileID];
+				// Chunk chunk = chunks[task.chunkID];
+				// string file = tilePaths[task.tileID];
 
+				// uint32_t firstPoint = task.chunkIndex * 50'000;
+				// uint32_t numPoints = min((tile.numPoints - firstPoint), 50'000u);
+
+				// LasHeader header = loadHeader(file);
+				// auto buffer = make_shared<Buffer>(header.bytesPerPoint * numPoints);
+
+				// double translation[3] = {-header.min[0], -header.min[1], -header.min[2]};
+				// loadLasNative(file, header, firstPoint, numPoints, buffer->data, translation);
+
+				// CUdeviceptr cptr_batch;
+				// cuMemAlloc(&cptr_batch, 50'000 * sizeof(Point));
+				// cuMemcpyHtoD(cptr_batch, buffer->data, numPoints * sizeof(Point));
+
+				// { // invoke chunkLoaded kernel with a single thread
+				// 	int workgroupSize = 1;
+				// 	auto& kernel = cuda_program->kernels["kernel_chunkLoaded"];
+				// 	int maxActiveBlocksPerSM;
+				// 	cuOccupancyMaxActiveBlocksPerMultiprocessor(&maxActiveBlocksPerSM, kernel, workgroupSize, 0);
+				// 	int numGroups = maxActiveBlocksPerSM * numSMs;
+					
+				// 	uint32_t chunkIndex = chunk.chunkIndex;
+				// 	uint32_t chunkID = task.chunkID;
+				// 	uint64_t ptr_points = (uint64_t)cptr_batch;
+
+				// 	Point point;
+				// 	point.x = buffer->get<float>(0);
+				// 	point.y = buffer->get<float>(4);
+				// 	point.z = buffer->get<float>(8);
+
+				// 	void* args[] = {
+				// 		&chunkIndex, &chunkID, &ptr_points, &cptr_tiles, &cptr_chunks
+				// 	};
+
+				// 	auto res_launch = cuLaunchCooperativeKernel(kernel,
+				// 		1, 1, 1,
+				// 		1, 1, 1,
+				// 		0, 0, args);
+
+				// 	if(res_launch != CUDA_SUCCESS){
+				// 		const char* str; 
+				// 		cuGetErrorString(res_launch, &str);
+				// 		printf("error: %s \n", str);
+				// 	}
+				
+				// }
+			}
 		}
 		
 
