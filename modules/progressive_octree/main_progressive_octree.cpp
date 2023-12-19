@@ -38,9 +38,17 @@ vector<string> paths = {
 	// "d:/dev/pointclouds/riegl/retz.las",
 };
 
+struct Chunk_HostData{
+	uint32_t tileID;
+	uint32_t chunkIndex; // within tile
+	bool isLoading = false;
+	bool isLoaded = false;
+};
+
 vector<string> tilePaths;
 vector<Tile> tiles;
 vector<Chunk> chunks;
+vector<Chunk_HostData> chunks_hostData;
 
 CUdevice device;
 CUcontext context;
@@ -53,6 +61,8 @@ CUdeviceptr cptr_tiles;
 CUdeviceptr cptr_chunks;
 CUdeviceptr cptr_commandsQueue;
 CUdeviceptr cptr_commandsQueueCounter;
+CUdeviceptr cptr_chunksToLoad, cptr_numChunksToLoad;
+
 
 
 CUgraphicsResource cugl_colorbuffer;
@@ -67,9 +77,13 @@ glm::mat4 transform_updatebound;
 
 Stats stats;
 void* h_stats_pinned = nullptr;
+
 void* h_commandQueue_pinned = nullptr;
 void* h_commandQueueCounter_pinned = nullptr;
 uint64_t commandsLoadedFromDevice = 0;
+
+void* h_chunksToLoad_pinned = nullptr;
+void* h_numChunksToLoad_pinned = nullptr;
 
 struct PendingCommandLoad{
 	uint64_t start_0;
@@ -105,6 +119,8 @@ deque<Task_UnloadChunk> tasks_unloadChunk;
 mutex mtx_loadChunk;
 mutex mtx_uploadChunk;
 mutex mtx_unloadChunk;
+
+
 
 struct {
 	bool useHighQualityShading       = false;
@@ -283,7 +299,8 @@ void renderCUDA(shared_ptr<GLRenderer> renderer){
 		&output_surf,
 		&cptr_stats,
 		&cptr_tiles, &cptr_chunks,
-		&cptr_commandsQueue, &cptr_commandsQueueCounter
+		&cptr_commandsQueue, &cptr_commandsQueueCounter,
+		&cptr_chunksToLoad, &cptr_numChunksToLoad
 	};
 
 	auto res_launch = cuLaunchCooperativeKernel(kernel_render,
@@ -353,15 +370,31 @@ void initCudaProgram(shared_ptr<GLRenderer> renderer){
 	cuMemAlloc(&cptr_chunks                , 1'000'000 * sizeof(Chunk)); // ~50MB, should be good for 50 billion points
 	cuMemAlloc(&cptr_commandsQueue         , COMMAND_QUEUE_CAPACITY * sizeof(Command)); 
 	cuMemAlloc(&cptr_commandsQueueCounter  , 8);
+
+	cuMemAlloc(&cptr_chunksToLoad  , 4 * MAX_CHUNKS_TO_LOAD);
+	cuMemAlloc(&cptr_numChunksToLoad  , 8);
+
 	cuMemAlloc(&cptr_stats                 , sizeof(Stats));
 	cuMemAllocHost((void**)&h_stats_pinned , sizeof(Stats));
 	cuMemAllocHost((void**)&h_commandQueue_pinned, COMMAND_QUEUE_CAPACITY * sizeof(Command));
 	cuMemAllocHost((void**)&h_commandQueueCounter_pinned, 8);
 
+	cuMemAllocHost((void**)&h_chunksToLoad_pinned, 4 * MAX_CHUNKS_TO_LOAD);
+	cuMemAllocHost((void**)&h_numChunksToLoad_pinned, 8);
+
+	uint32_t maxint = -1;
+	cuMemsetD32(cptr_chunksToLoad, maxint, MAX_CHUNKS_TO_LOAD);
+	for (int i = 0; i < MAX_CHUNKS_TO_LOAD; i++) {
+		int32_t* chunksToLoad = (int32_t*)h_chunksToLoad_pinned;
+		chunksToLoad[i] = -1;
+	}
+
 
 	uint64_t zero_u64 = 0;
 	cuMemcpyHtoD(cptr_commandsQueueCounter, &zero_u64, 8);
 	memcpy(h_commandQueueCounter_pinned, &zero_u64, 8);
+	// memset(h_chunksToLoad_pinned, 0, 4 * MAX_CHUNKS_TO_LOAD);
+	memcpy(h_numChunksToLoad_pinned, &zero_u64, 8);
 	
 
 	printfmt("sizeof(Tile): {} \n", sizeof(Tile));
@@ -431,7 +464,8 @@ void spawnLoader(){
 
 				// Load chunk data
 				Tile tile = tiles[task.tileID];
-				Chunk chunk = chunks[task.chunkID];
+				Chunk& chunk = chunks[task.chunkID];
+				Chunk_HostData& hostData = chunks_hostData[task.chunkID];
 				string file = tilePaths[task.tileID];
 
 				uint32_t firstPoint = task.chunkIndex * 50'000;
@@ -453,7 +487,14 @@ void spawnLoader(){
 				};
 
 				mtx_uploadChunk.lock();
+				mtx_loadChunk.lock();
+
 				tasks_uploadChunk.push_back(task_upload);
+
+				hostData.isLoading = false;
+				hostData.isLoaded = true;
+
+				mtx_loadChunk.unlock();
 				mtx_uploadChunk.unlock();
 				
 			}else{
@@ -488,8 +529,8 @@ int main(){
 	initCuda();
 	initCudaProgram(renderer);
 
-	int numUploaders = 16;
-	for(int i = 0; i < numUploaders; i++){
+	int numLoaders = 32;
+	for(int i = 0; i < numLoaders; i++){
 		spawnLoader();
 	}
 
@@ -631,6 +672,14 @@ int main(){
 				chunk.state = STATE_EMPTY;
 				
 				chunks.push_back(chunk);
+
+				Chunk_HostData hostData = {
+					.tileID       = uint32_t(tileIndex),
+					.chunkIndex   = uint32_t(chunkIndex),
+					.isLoading    = false,
+					.isLoaded     = false,
+				};
+				chunks_hostData.push_back(hostData);
 			}
 		}
 
@@ -706,15 +755,17 @@ int main(){
 					Command* command = &commands[commandIndex % COMMAND_QUEUE_CAPACITY];
 					
 					if(command->command == CMD_READ_CHUNK){
-						CommandReadChunkData* data = (CommandReadChunkData*)command->data;
+						// CommandReadChunkData* data = (CommandReadChunkData*)command->data;
 
-						Task_LoadChunk task;
-						task.tileID = data->tileID;
-						task.chunkID = data->chunkID;
-						task.chunkIndex = data->chunkIndex;
+						// Task_LoadChunk task;
+						// task.tileID = data->tileID;
+						// task.chunkID = data->chunkID;
+						// task.chunkIndex = data->chunkIndex;
 
-						lock_guard<mutex> lock(mtx_loadChunk);
-						tasks_loadChunk.push_back(task);
+						// // lock_guard<mutex> lock(mtx_loadChunk);
+						// mtx_loadChunk.lock();
+						// tasks_loadChunk.push_back(task);
+						// mtx_loadChunk.unlock();
 					}else if(command->command == CMD_UNLOAD_CHUNK){
 						CommandUnloadChunkData* data = (CommandUnloadChunkData*)command->data;
 
@@ -747,6 +798,9 @@ int main(){
 			for(int i = 0; i < tasks_unloadChunk.size(); i++){
 				Task_UnloadChunk task = tasks_unloadChunk[i];
 
+				chunks_hostData[task.chunkID].isLoaded = false;
+				chunks_hostData[task.chunkID].isLoading = false;
+
 				cuMemFree((CUdeviceptr)task.cptr);
 				
 				{ // invoke chunkUnloaded kernel
@@ -769,6 +823,61 @@ int main(){
 			tasks_unloadChunk.clear();
 		}
 
+		// if(frameCounter % 100 == 0)
+		{
+			int32_t* chunksToLoad = (int32_t*)h_chunksToLoad_pinned;
+			bool encounteredEmpty = false;
+
+			mtx_loadChunk.lock();
+
+			for(int i = 0; i < tasks_loadChunk.size(); i++){
+				auto task = tasks_loadChunk[i];
+
+				chunks_hostData[task.chunkID].isLoading = false;
+			}
+
+			tasks_loadChunk.clear();
+
+			if(chunksToLoad[0] != -1)
+			for(int i = 0; i < MAX_CHUNKS_TO_LOAD; i++){
+
+				int value = chunksToLoad[i];
+
+				// if(i < 10){
+				// 	cout << value << ", ";
+				// }else if(i == 10){
+				// 	cout << " ... ";
+				// }
+
+				if(!encounteredEmpty){
+					encounteredEmpty = value == -1;
+				}
+
+				if (encounteredEmpty) {
+					// cout << " [" << i << "]" << endl;
+					break;
+				}
+
+				Chunk& chunk = chunks[value];
+				Chunk_HostData& hostData = chunks_hostData[value];
+
+				if (hostData.isLoaded) continue;
+				if (hostData.isLoading) continue;
+
+				Task_LoadChunk task;
+				task.tileID = chunk.tileID;
+				task.chunkID = value;
+				task.chunkIndex = chunk.chunkIndex;
+
+				tasks_loadChunk.push_back(task);
+
+				hostData.isLoading = true;
+			}
+
+			mtx_loadChunk.unlock();
+		}
+
+		for(int i = 0; i < 100; i++)
 		{// upload chunks that finished loading from file
 
 			mtx_uploadChunk.lock();
@@ -852,6 +961,11 @@ int main(){
 			cuMemcpyDtoHAsync(h_stats_pinned, cptr_stats, sizeof(Stats), ((CUstream)CU_STREAM_DEFAULT));
 			memcpy(&stats, h_stats_pinned, sizeof(Stats));
 
+			// async copy chunks that we should load
+			cuMemcpyDtoHAsync(h_chunksToLoad_pinned, cptr_chunksToLoad, 4 * MAX_CHUNKS_TO_LOAD, ((CUstream)CU_STREAM_DEFAULT));
+			// memcpy(&stats, h_stats_pinned, sizeof(Stats));
+
+			// async copy commands
 			cuMemcpyDtoHAsync(h_commandQueueCounter_pinned, cptr_commandsQueueCounter, 8, ((CUstream)CU_STREAM_DEFAULT));
 
 			uint64_t commandQueueCounter = *((uint64_t*)h_commandQueueCounter_pinned);

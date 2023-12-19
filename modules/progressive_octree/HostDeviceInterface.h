@@ -4,6 +4,7 @@
 #include "builtin_types.h"
 
 constexpr int MAX_POINT_BATCHES = 10'000;
+constexpr int MAX_CHUNKS_TO_LOAD = 100;
 
 struct mat4{
 	float4 rows[4];
@@ -114,7 +115,7 @@ struct Chunk{
 	Point* points;
 };
 
-constexpr int COMMAND_QUEUE_CAPACITY = 100'000;
+constexpr int COMMAND_QUEUE_CAPACITY = 500'000;
 constexpr int CMD_READ_FILE = 0;
 constexpr int CMD_READ_CHUNK = 1;
 constexpr int CMD_UNLOAD_CHUNK = 2;

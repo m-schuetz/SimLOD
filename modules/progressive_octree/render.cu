@@ -83,9 +83,9 @@ Data* allocateStuff(uint32_t* buffer){
 	data->lines = lines;
 
 	Triangles* triangles = allocator->alloc2<Triangles>(1);
-	triangles->positions = allocator->alloc2<float3  >(1'000'000);
-	triangles->uvs       = allocator->alloc2<float2  >(1'000'000);
-	triangles->colors    = allocator->alloc2<uint32_t>(1'000'000);
+	triangles->positions = allocator->alloc2<float3  >(5'000'000);
+	triangles->uvs       = allocator->alloc2<float2  >(5'000'000);
+	triangles->colors    = allocator->alloc2<uint32_t>(5'000'000);
 	data->triangles = triangles;
 
 	data->dbg_0 = allocator->alloc2<uint64_t>(1);
@@ -342,7 +342,8 @@ void kernel_render(
 	cudaSurfaceObject_t gl_colorbuffer,
 	Stats* stats,
 	Tile* tiles, Chunk* chunks,
-	Command* commandQueue, uint64_t* commandQueueCounter
+	Command* commandQueue, uint64_t* commandQueueCounter,
+	int32_t* chunksToLoad, uint32_t* numChunksToLoad
 ){
 
 	auto tStart = nanotime();
@@ -366,6 +367,12 @@ void kernel_render(
 		// framebuffer[pixelIndex] = 0x7f800000'00332211ull;
 		framebuffer[pixelIndex] = (0x7f800000ull << 32) | uint64_t(BACKGROUND_COLOR);
 	});
+
+	grid.sync();
+
+	if(grid.thread_rank() == 0){
+		*numChunksToLoad = 0;
+	}
 
 	grid.sync();
 
@@ -417,7 +424,8 @@ void kernel_render(
 			float d = sqrt(screen_center_x * screen_center_x + screen_center_y * screen_center_y);
 
 			// float w = clamp(1.0f - d, 0.0f, 1.0f);
-			float w = exp(-d * d / 0.020f);
+			float w = exp(-d * d / 0.040f);
+			w = clamp(w, 0.1f, 1.0f);
 			float w2 = w * dx * dy;
 
 			tile.isHighlyVisible = w2 > 20000;
@@ -454,11 +462,11 @@ void kernel_render(
 
 		// float w = clamp(powf(clamp(1.0f - d, 0.0f, 1.0f), 4.0f), 0.5f, 1.0f);
 		// float w = 1.0f;
-		float w = clamp(1.0f - d, 0.0f, 1.0f);
-		w = exp(-d * d / 0.0020f);
-		float w2 = w * dx * dy;
+		// float w = clamp(1.0f - d, 0.0f, 1.0f);
+		// w = exp(-d * d / 0.020f);
+		// float w2 = w * dx * dy;
 
-		bool isHighlyVisible = w2 > 20000;
+		// bool isHighlyVisible = w2 > 20000;
 
 		float3 pos = {
 			chunk.min.x * 0.5 + chunk.max.x * 0.5,
@@ -480,37 +488,38 @@ void kernel_render(
 
 		if(tile.isHighlyVisible){
 
-			uint32_t boxColor = 0x000000ff;
-			if(chunk.state == STATE_LOADED){
-				boxColor = 0x0000ff00;
+			// if(chunk.state == STATE_LOADED){
+			// 	uint32_t boxColor = 0x000000ff;
+			// 	boxColor = 0x0000ff00;
+			// 	// drawBoundingBox(data->lines, pos, 2.02f * size, boxColor);
+			// }
+
+			if(chunk.state != STATE_LOADED){
+				uint32_t index_nctl = atomicAdd(numChunksToLoad, 1);
+				chunksToLoad[index_nctl] = chunkIndex;
 			}
-			// drawBoundingBox(data->lines, pos, 2.02f * size, boxColor);
 
 			if(chunk.state == STATE_EMPTY){
 				// LOAD CHUNK!
 
-				uint32_t index_batchInPool = atomicAdd(&data->pointBatchPool->numItems, -1) - 1;
+				Command command;
+				command.command = CMD_READ_CHUNK;
+				
+				CommandReadChunkData cmddata;
+				cmddata.tileID = chunk.tileID;
+				cmddata.chunkIndex = chunk.chunkIndex;
+				cmddata.chunkID = chunkIndex;
+				cmddata.cptr_pointBatch = 0;
 
-				if(index_batchInPool < 0){
-					// not enough point batches in pool, revert and skip loading
-					atomicAdd(&data->pointBatchPool->numItems, 1);
-				}else{
-					Command command;
-					command.command = CMD_READ_CHUNK;
-					
-					CommandReadChunkData cmddata;
-					cmddata.tileID = chunk.tileID;
-					cmddata.chunkIndex = chunk.chunkIndex;
-					cmddata.chunkID = chunkIndex;
-					cmddata.cptr_pointBatch = 0;
+				memcpy(command.data, &cmddata, sizeof(cmddata));
+				
+				uint32_t index = atomicAdd(commandQueueCounter, 1llu) % COMMAND_QUEUE_CAPACITY;
+				commandQueue[index] = command;
 
-					memcpy(command.data, &cmddata, sizeof(cmddata));
-					
-					uint32_t index = atomicAdd(commandQueueCounter, 1llu) % COMMAND_QUEUE_CAPACITY;
-					commandQueue[index] = command;
+				chunk.state = STATE_LOADING;
 
-					chunk.state = STATE_LOADING;
-				}
+				// uint32_t index_nctl = atomicAdd(numChunksToLoad, 1);
+				// chunksToLoad[index_nctl] = chunkIndex;
 			}
 		}else if(chunk.state == STATE_LOADED && !tile.isHighlyVisible){
 
@@ -601,6 +610,14 @@ void kernel_render(
 
 	rasterizeTriangles(triangles, numProcessedTriangles, framebuffer, uniforms);
 	rasterizeLines(data->lines, data->framebuffer, uniforms.width, uniforms.height, uniforms.transform);
+
+	grid.sync();
+
+	processRange(MAX_CHUNKS_TO_LOAD, [&](int index){
+		if(index >= *numChunksToLoad){
+			chunksToLoad[index] = -1;
+		}
+	});
 
 	grid.sync();
 
