@@ -92,11 +92,19 @@ struct Task_UploadChunk {
 	shared_ptr<Buffer> points;
 	int numPoints;
 };
+struct Task_UnloadChunk{
+	int tileID;
+	int chunkIndex;
+	int chunkID;
+	uint64_t cptr;
+};
 
 deque<Task_LoadChunk> tasks_loadChunk;
 deque<Task_UploadChunk> tasks_uploadChunk;
+deque<Task_UnloadChunk> tasks_unloadChunk;
 mutex mtx_loadChunk;
 mutex mtx_uploadChunk;
+mutex mtx_unloadChunk;
 
 struct {
 	bool useHighQualityShading       = false;
@@ -367,7 +375,8 @@ void initCudaProgram(shared_ptr<GLRenderer> renderer){
 		.kernels = {
 			"kernel_render",
 			"kernel_init",
-			"kernel_chunkLoaded"
+			"kernel_chunkLoaded",
+			"kernel_chunkUnloaded"
 		}
 	});
 
@@ -706,6 +715,21 @@ int main(){
 
 						lock_guard<mutex> lock(mtx_loadChunk);
 						tasks_loadChunk.push_back(task);
+					}else if(command->command == CMD_UNLOAD_CHUNK){
+						CommandUnloadChunkData* data = (CommandUnloadChunkData*)command->data;
+
+						Task_UnloadChunk task = {
+							.tileID     = int(data->tileID),
+							.chunkIndex = int(data->chunkIndex),
+							.chunkID    = int(data->chunkID),
+							.cptr       = data->cptr_pointBatch,
+						};
+
+						mtx_unloadChunk.lock();
+						tasks_unloadChunk.push_back(task);
+						mtx_unloadChunk.unlock();
+
+						
 					}
 				}
 			}else{
@@ -713,7 +737,36 @@ int main(){
 				// we can stop checking the other ones.
 				break;
 			}
+		}
 
+		{ // Deallocate/Unload least important chunks
+			lock_guard<mutex> lock(mtx_unloadChunk);
+
+			auto& kernel = cuda_program->kernels["kernel_chunkUnloaded"];
+
+			for(int i = 0; i < tasks_unloadChunk.size(); i++){
+				Task_UnloadChunk task = tasks_unloadChunk[i];
+
+				cuMemFree((CUdeviceptr)task.cptr);
+				
+				{ // invoke chunkUnloaded kernel
+					uint32_t chunkID = task.chunkID;
+
+					void* args[] = {&chunkID, &cptr_chunks};
+					auto res_launch = cuLaunchCooperativeKernel(kernel,
+						1, 1, 1,
+						1, 1, 1,
+						0, 0, args);
+
+					if(res_launch != CUDA_SUCCESS){
+						const char* str; 
+						cuGetErrorString(res_launch, &str);
+						printf("error: %s \n", str);
+					}
+				}
+			}
+
+			tasks_unloadChunk.clear();
 		}
 
 		{// upload chunks that finished loading from file
@@ -769,67 +822,8 @@ int main(){
 					}
 				
 				}
-
-
 			}else{
 				mtx_uploadChunk.unlock();
-
-				
-			}
-
-			if(tasks_loadChunk.size() > 0){
-				// Task_LoadChunk task = tasks_loadChunk.front();
-				// tasks_loadChunk.pop_front();
-
-				// Tile tile = tiles[task.tileID];
-				// Chunk chunk = chunks[task.chunkID];
-				// string file = tilePaths[task.tileID];
-
-				// uint32_t firstPoint = task.chunkIndex * 50'000;
-				// uint32_t numPoints = min((tile.numPoints - firstPoint), 50'000u);
-
-				// LasHeader header = loadHeader(file);
-				// auto buffer = make_shared<Buffer>(header.bytesPerPoint * numPoints);
-
-				// double translation[3] = {-header.min[0], -header.min[1], -header.min[2]};
-				// loadLasNative(file, header, firstPoint, numPoints, buffer->data, translation);
-
-				// CUdeviceptr cptr_batch;
-				// cuMemAlloc(&cptr_batch, 50'000 * sizeof(Point));
-				// cuMemcpyHtoD(cptr_batch, buffer->data, numPoints * sizeof(Point));
-
-				// { // invoke chunkLoaded kernel with a single thread
-				// 	int workgroupSize = 1;
-				// 	auto& kernel = cuda_program->kernels["kernel_chunkLoaded"];
-				// 	int maxActiveBlocksPerSM;
-				// 	cuOccupancyMaxActiveBlocksPerMultiprocessor(&maxActiveBlocksPerSM, kernel, workgroupSize, 0);
-				// 	int numGroups = maxActiveBlocksPerSM * numSMs;
-					
-				// 	uint32_t chunkIndex = chunk.chunkIndex;
-				// 	uint32_t chunkID = task.chunkID;
-				// 	uint64_t ptr_points = (uint64_t)cptr_batch;
-
-				// 	Point point;
-				// 	point.x = buffer->get<float>(0);
-				// 	point.y = buffer->get<float>(4);
-				// 	point.z = buffer->get<float>(8);
-
-				// 	void* args[] = {
-				// 		&chunkIndex, &chunkID, &ptr_points, &cptr_tiles, &cptr_chunks
-				// 	};
-
-				// 	auto res_launch = cuLaunchCooperativeKernel(kernel,
-				// 		1, 1, 1,
-				// 		1, 1, 1,
-				// 		0, 0, args);
-
-				// 	if(res_launch != CUDA_SUCCESS){
-				// 		const char* str; 
-				// 		cuGetErrorString(res_launch, &str);
-				// 		printf("error: %s \n", str);
-				// 	}
-				
-				// }
 			}
 		}
 		

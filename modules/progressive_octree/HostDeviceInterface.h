@@ -117,13 +117,21 @@ struct Chunk{
 constexpr int COMMAND_QUEUE_CAPACITY = 100'000;
 constexpr int CMD_READ_FILE = 0;
 constexpr int CMD_READ_CHUNK = 1;
+constexpr int CMD_UNLOAD_CHUNK = 2;
 constexpr int CMD_DBG = 1234;
 
 struct CommandReadChunkData{
 	uint32_t tileID;
 	uint32_t chunkIndex;
 	uint32_t chunkID;
-	uint64_t cptr_pointBatch; // Host should load points to this place
+	uint64_t cptr_pointBatch; // Host should allocate and store chunk's points here
+};
+
+struct CommandUnloadChunkData{
+	uint32_t tileID;
+	uint32_t chunkIndex;
+	uint32_t chunkID;
+	uint64_t cptr_pointBatch; // Device notifies host that this memory can be deallocated
 };
 
 struct Command{

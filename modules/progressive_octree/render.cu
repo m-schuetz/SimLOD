@@ -163,6 +163,7 @@ void toScreen(float3 boxMin, float3 boxMax, float2& screen_min, float2& screen_m
 
 void rasterizeChunk(
 	Chunk* chunk, 
+	Tile* tile,
 	uint64_t* target, 
 	float width, float height, 
 	mat4 transform
@@ -172,9 +173,9 @@ void rasterizeChunk(
 
 		Point point = chunk->points[index];
 
-		point.x += chunk->min.x;
-		point.y += chunk->min.y;
-		point.z += chunk->min.z;
+		point.x += tile->min.x;
+		point.y += tile->min.y;
+		point.z += tile->min.z;
 
 		float4 ndc = transform * float4{point.x, point.y, point.z, 1.0f};
 
@@ -211,27 +212,6 @@ void rasterizeChunk(
 
 }
 
-extern "C" __global__
-void kernel_init(
-	uint32_t* buffer,
-	Stats* stats,
-	Tile* tiles, Chunk* chunks,
-	Command* commandQueue, uint64_t* commandQueueCounter
-){
-	Allocator _allocator(buffer, 0);
-	allocator = &_allocator;
-
-	Data* data = allocateStuff(buffer);
-
-	// processRange(MAX_POINT_BATCHES, [&](int index){
-
-	// 	PointBatch* batch = new PointBatch();
-	// 	batch->numPoints = 0;
-
-	// 	data->pointBatchPool->items[index] = batch;
-	// });
-}
-
 // from: https://stackoverflow.com/a/51549250
 // TODO: License
 __forceinline__ float atomicMinFloat(float * addr, float value) {
@@ -255,6 +235,19 @@ __forceinline__ float atomicMaxFloat(float * addr, float value) {
 }
 
 extern "C" __global__
+void kernel_init(
+	uint32_t* buffer,
+	Stats* stats,
+	Tile* tiles, Chunk* chunks,
+	Command* commandQueue, uint64_t* commandQueueCounter
+){
+	Allocator _allocator(buffer, 0);
+	allocator = &_allocator;
+
+	Data* data = allocateStuff(buffer);
+}
+
+extern "C" __global__
 void kernel_chunkLoaded(
 	uint32_t* buffer,
 	const uint32_t chunkIndex,
@@ -273,10 +266,14 @@ void kernel_chunkLoaded(
 
 	Chunk& chunk = chunks[chunkID];
 	chunk.state = STATE_LOADED;
+
+	Tile& tile = tiles[chunk.tileID];
+
 	memcpy(&chunk.points, &ptr_points, 8);
 
-	float3 min = chunk.min;
+	float3 min = tile.min;
 	
+	// compute new bounding box and sum of colors
 	grid.sync();
 	if(grid.thread_rank() == 0){
 		chunk.min = {Infinity, Infinity, Infinity};
@@ -307,40 +304,34 @@ void kernel_chunkLoaded(
 
 	grid.sync();
 
+	// set chunk's color to average of point
 	if(grid.thread_rank() == 0){
-		// printf("old min: (%.1f, %.1f, %.1f), new: (%.1f, %.1f, %.1f) \n", 
-		// 	min.x, min.y, min.z,
-		// 	chunk.min.x, chunk.min.y, chunk.min.z
-		// );
-
 		chunk.rgba[0] = sumColors[0] / sumColors[3];
 		chunk.rgba[1] = sumColors[1] / sumColors[3];
 		chunk.rgba[2] = sumColors[2] / sumColors[3];
 	}
 
-	processRange(chunk.numPoints, [&](int index){
-		Point point = chunk.points[index];
+	// realign points relative to chunk's new bounding box.
+	// processRange(chunk.numPoints, [&](int index){
+	// 	Point point = chunk.points[index];
 
-		point.x = point.x + min.x - chunk.min.x;
-		point.y = point.y + min.y - chunk.min.y;
-		point.z = point.z + min.z - chunk.min.z;
+	// 	point.x = point.x + min.x - chunk.min.x;
+	// 	point.y = point.y + min.y - chunk.min.y;
+	// 	point.z = point.z + min.z - chunk.min.z;
 
-		chunk.points[index] = point;
+	// 	chunk.points[index] = point;
 
-	});
+	// });
+}
 
-	grid.sync();
-
-
-	// printf("[kernel] chunk loaded!\n");
-	// printf("[kernel] chunkIndex: %u \n", chunkIndex);
-	// printf("[kernel] chunkID: %u \n", chunkID);
-	// printf("[kernel] ptr_points: %llu \n", ptr_points);
-
-	// Point point = chunk.points[0];
-
-	// printf("[kernel] xyz: %.1f, %.1f, %.1f \n", point.x, point.y, point.z);
-	// printf("huh?\n");
+extern "C" __global__
+void kernel_chunkUnloaded(
+	const uint32_t chunkID,
+	Chunk* chunks
+){
+	Chunk& chunk = chunks[chunkID];
+	chunk.state = STATE_EMPTY;
+	chunk.points = nullptr;
 }
 
 
@@ -426,7 +417,7 @@ void kernel_render(
 			float d = sqrt(screen_center_x * screen_center_x + screen_center_y * screen_center_y);
 
 			// float w = clamp(1.0f - d, 0.0f, 1.0f);
-			float w = exp(-d * d / 0.150f);
+			float w = exp(-d * d / 0.020f);
 			float w2 = w * dx * dy;
 
 			tile.isHighlyVisible = w2 > 20000;
@@ -434,6 +425,8 @@ void kernel_render(
 
 			if(!tile.isHighlyVisible){
 				drawBox(triangles, pos, size, tile.color);
+			}else{
+				drawBoundingBox(data->lines, pos, 2.0f * size, 0x0000ffff);
 			}
 		}
 	}
@@ -462,7 +455,7 @@ void kernel_render(
 		// float w = clamp(powf(clamp(1.0f - d, 0.0f, 1.0f), 4.0f), 0.5f, 1.0f);
 		// float w = 1.0f;
 		float w = clamp(1.0f - d, 0.0f, 1.0f);
-		w = exp(-d * d / 0.20f);
+		w = exp(-d * d / 0.0020f);
 		float w2 = w * dx * dy;
 
 		bool isHighlyVisible = w2 > 20000;
@@ -502,9 +495,6 @@ void kernel_render(
 					// not enough point batches in pool, revert and skip loading
 					atomicAdd(&data->pointBatchPool->numItems, 1);
 				}else{
-
-					// PointBatch* batch = data->pointBatchPool->items[index_batchInPool];
-
 					Command command;
 					command.command = CMD_READ_CHUNK;
 					
@@ -512,7 +502,6 @@ void kernel_render(
 					cmddata.tileID = chunk.tileID;
 					cmddata.chunkIndex = chunk.chunkIndex;
 					cmddata.chunkID = chunkIndex;
-					// cmddata.cptr_pointBatch = (uint64_t)batch;
 					cmddata.cptr_pointBatch = 0;
 
 					memcpy(command.data, &cmddata, sizeof(cmddata));
@@ -523,11 +512,29 @@ void kernel_render(
 					chunk.state = STATE_LOADING;
 				}
 			}
-		}else{
+		}else if(chunk.state == STATE_LOADED && !tile.isHighlyVisible){
+
+			// chunk is loaded but not high priority -> unload points
+
+			Command command;
+			command.command = CMD_UNLOAD_CHUNK;
+
+			CommandUnloadChunkData cmddata;
+			cmddata.tileID = chunk.tileID;
+			cmddata.chunkIndex = chunk.chunkIndex;
+			cmddata.chunkID = chunkIndex;
+			cmddata.cptr_pointBatch = (uint64_t)chunk.points;
+
+			memcpy(command.data, &cmddata, sizeof(cmddata));
+					
+			uint32_t index = atomicAdd(commandQueueCounter, 1llu) % COMMAND_QUEUE_CAPACITY;
+			commandQueue[index] = command;
+
+			chunk.state = STATE_UNLOADING;
 
 			// if(chunk.chunkIndex == 0)
 			// {
-			// 	drawBoundingBox(data->lines, pos, 2.02f * size, 0x000000ff);
+				drawBoundingBox(data->lines, pos, 2.02f * size, 0x000000ff);
 			// 	drawBox(data->triangles, pos, size, tile.color);
 			// }
 		}
@@ -566,7 +573,8 @@ void kernel_render(
 
 	for(int i = 0; i < *numChunksVisible; i++){
 		Chunk chunk = visibleChunks[i];
-		rasterizeChunk(&chunk, framebuffer, uniforms.width, uniforms.height, uniforms.transform);
+		Tile* tile = &tiles[chunk.tileID];
+		rasterizeChunk(&chunk, tile, framebuffer, uniforms.width, uniforms.height, uniforms.transform);
 	}
 
 	grid.sync();
