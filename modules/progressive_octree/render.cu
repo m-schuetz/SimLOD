@@ -496,7 +496,10 @@ void kernel_render(
 
 			if(chunk.state != STATE_LOADED){
 				uint32_t index_nctl = atomicAdd(numChunksToLoad, 1);
-				chunksToLoad[index_nctl] = chunkIndex;
+
+				if(index_nctl < MAX_CHUNKS_TO_LOAD){
+					chunksToLoad[index_nctl] = chunkIndex;
+				}
 			}
 
 			if(chunk.state == STATE_EMPTY){
