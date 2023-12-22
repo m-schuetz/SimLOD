@@ -546,7 +546,7 @@ int main(){
 		float3 acc_max = { -Infinity, -Infinity, -Infinity };
 
 		// for(int tileIndex = 0; tileIndex < files.size(); tileIndex++)
-		 for(int tileIndex = 0; tileIndex < min(int(files.size()), 500); tileIndex++)
+		 for(int tileIndex = 0; tileIndex < min(int(files.size()), 3000); tileIndex++)
 		{
 			string file = files[tileIndex];
 			
