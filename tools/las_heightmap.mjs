@@ -107,12 +107,13 @@ async function processLas(file, outdir){
 	let contentByteSize = 6 * heightmapSize.x * heightmapSize.y;
 
 	let ppmbuffer = Buffer.alloc(headerByteSize + contentByteSize);
+	let floatBuffer = Buffer.alloc(4 * heightmapSize.x * heightmapSize.y);
 
 	for(let i = 0; i < headerByteSize; i++){
 		ppmbuffer.writeUint8(ppmHeader.charCodeAt(i), i);
 	}
 
-	// clear buffer
+	// clear buffer (probably cleared, though?)
 	for(let y = 0; y < heightmapSize.y; y++)
 	for(let x = 0; x < heightmapSize.x; x++)
 	{
@@ -121,6 +122,7 @@ async function processLas(file, outdir){
 		ppmbuffer.writeUint16LE(  0, headerByteSize + 6 * pixelIndex + 0);
 		ppmbuffer.writeUint16LE(  0, headerByteSize + 6 * pixelIndex + 2);
 		ppmbuffer.writeUint16LE(  0, headerByteSize + 6 * pixelIndex + 4);
+		floatBuffer.writeFloatLE(-Infinity, 4 * pixelIndex);
 	};
 
 	let MAX_BATCH_SIZE = 100_000;
@@ -173,6 +175,9 @@ async function processLas(file, outdir){
 			let intHeight = Math.round(newHeight)
 			intHeight = Math.max(intHeight, 0);    // clamp to (0, Inf)
 			ppmbuffer.writeUint16LE(intHeight, headerByteSize + 6 * pixelIndex + 4);
+
+			// store height as float32 in dedicated float buffer
+			floatBuffer.writeFloatLE(newHeight, 4 * pixelIndex);
 			
 		}
 
@@ -181,6 +186,7 @@ async function processLas(file, outdir){
 
 	let filename = path.basename(file);
 	fs.writeFileSync(`${outdir}./${filename}.ppm`, ppmbuffer);
+	fs.writeFileSync(`${outdir}./${filename}.heightmap`, floatBuffer);
 
 	handle.close();
 
@@ -190,18 +196,18 @@ async function processLas(file, outdir){
 
 
 // PROCESS SPECIFIC FILES
-let files = [
-	"E:/resources/pointclouds/CA13_las/ot_35120E8124C_1_1.las",
-	// "E:/resources/pointclouds/CA13_las/ot_35120A4202A_1_1.las",
-	// "E:/resources/pointclouds/CA13_las/ot_35120A4202B_1_1.las",
-	// "E:/resources/pointclouds/CA13_las/ot_35120A4202C_1_1.las",
-];
+// let files = [
+// 	"E:/resources/pointclouds/CA13_las/ot_35120E8124C_1_1.las",
+// 	// "E:/resources/pointclouds/CA13_las/ot_35120A4202A_1_1.las",
+// 	// "E:/resources/pointclouds/CA13_las/ot_35120A4202B_1_1.las",
+// 	// "E:/resources/pointclouds/CA13_las/ot_35120A4202C_1_1.las",
+// ];
 
 // OR LOAD FROM DIRECTORY
-// let sourceDir = "E:/resources/pointclouds/CA13_las";
-// let files = fs.readdirSync(sourceDir);
-// files = files.map(filename => `${sourceDir}/${filename}`);
-// // files.slice(1000, 2000);
+let sourceDir = "E:/resources/pointclouds/CA13_las";
+let files = fs.readdirSync(sourceDir);
+files = files.map(filename => `${sourceDir}/${filename}`);
+// files.slice(1000, 2000);
 
 let outdir = "./heightmaps/";
 if(!fs.existsSync(outdir)){
