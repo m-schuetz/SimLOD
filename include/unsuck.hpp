@@ -20,6 +20,7 @@
 #include <functional>
 #include <mutex>
 
+#include <version>
 #ifdef __cpp_lib_format
 #include <format>
 #else
