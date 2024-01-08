@@ -56,7 +56,7 @@ target_link_libraries(${PROJECT_NAME} ${OPENGL_LIBRARY})
 ## fmt
 include(CheckIncludeFileCXX)
 check_include_file_cxx("format" STD_FMT_AVAILABLE)
-if (not STD_FMT_AVAILABLE)
+if (NOT ${STD_FMT_AVAILABLE})
 	add_subdirectory(libs/fmt)
 	target_link_libraries(${PROJECT_NAME} fmt::fmt)
 endif()
