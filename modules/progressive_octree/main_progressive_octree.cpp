@@ -11,6 +11,8 @@
 #include <deque>
 #include <atomic>
 #include <optional>
+
+#include <version>
 #ifdef __cpp_lib_format
 #include <format>
 #else
@@ -942,7 +944,7 @@ void spawnUploader(shared_ptr<GLRenderer> renderer) {
 
 			// reclaim all pinned memory slots that are no longer needed and give them back to the pool
 			mtx_pinnedMemoryInUpload.lock();
-			while (!pinnedMemoryInUpload.empty() && cuEventQuery(pinnedMemoryInUpload.front().uploadEnd) == cudaSuccess) {
+			while (!pinnedMemoryInUpload.empty() && cuEventQuery(pinnedMemoryInUpload.front().uploadEnd) == CUDA_SUCCESS) {
 				availableSlots.push_back(pinnedMemoryInUpload.front());
 				pinnedMemoryInUpload.pop_front();
 			}
