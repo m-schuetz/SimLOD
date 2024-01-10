@@ -94,7 +94,8 @@
 		"target": "cpp",
 		"bitset": "cpp",
 		"ranges": "cpp",
-		"span": "cpp"
+		"span": "cpp",
+		"unordered_set": "cpp"
 	},
 	"files.trimTrailingWhitespace": false,
 	"editor.fontSize": 20,

@@ -74,7 +74,7 @@ async function readHeader(file){
 };
 
 
-async function processLas(file, outPath){
+async function processLas(file, outPath, outCSV){
 	let header = await readHeader(file);
 
 	// console.log(header);
@@ -122,6 +122,7 @@ async function processLas(file, outPath){
 		let line = `${x.toFixed(2)}, ${y.toFixed(2)}, ${z.toFixed(2)}, `;
 
 		await fsp.appendFile(outPath, line);
+		await fsp.appendFile(outCSV, `${x.toFixed(2)}, ${y.toFixed(2)}, ${z.toFixed(2)} \n`);
 
 		numPointsProcessed += 50_000;
 	}
@@ -149,6 +150,7 @@ async function processLas(file, outPath){
 // let file = "./test.las";
 // let file = "E:/resources/pointclouds/CA13_las/ot_35120A4201B_1_1.las";
 let outPath = "./report.txt";
+let outCSV = "./chunkPoints.csv";
 
 // let files = [
 // 	"E:/resources/pointclouds/CA13_las/ot_35120A4201B_1_1.las",
@@ -168,11 +170,12 @@ let files = fs.readdirSync("E:/resources/pointclouds/CA13_las");
 
 try{
 	await fsp.unlink(outPath);
+	await fsp.unlink(outCSV);
 }catch(e){}
 
 await fsp.appendFile(outPath, "filename, min_x, min_y, min_z, max_x, max_y, max_z, x, y, z, x, y, z, ... \n");
 for(let filename of files){
 
 	let filepath = `E:/resources/pointclouds/CA13_las/${filename}`;
-	await processLas(filepath, outPath);
+	await processLas(filepath, outPath, outCSV);
 }

@@ -3,7 +3,7 @@
 
 EventQueue *EventQueue::instance = new EventQueue();
 
-#ifdef _WIN32
+#if defined(_WIN32) || defined(WIN32)
 	#include "TCHAR.h"
 	#include "pdh.h"
 	#include "windows.h"
@@ -39,7 +39,7 @@ uint64_t getPhysicalSectorSize(string path) {
 #endif
 
 	LPCSTR lpcstrDisk = strDisk.c_str();
-	HANDLE hDevice = CreateFile(
+	HANDLE hDevice = CreateFileA(
 		lpcstrDisk,
 		0, 0, NULL,
 		OPEN_EXISTING, 0, NULL
