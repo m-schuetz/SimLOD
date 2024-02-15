@@ -131,3 +131,18 @@ else ()
 		COMMENT "POST BUILD: creating symlink for modules folder")
 endif (symlinksSupported OR NOT SimLOD_CreateCUDASymlinks)
 
+
+
+
+project(CreateTraining)
+
+add_executable(${PROJECT_NAME}
+    ${PROJECT_SOURCE_DIR}/include/unsuck_platform_specific.cpp
+    ${PROJECT_SOURCE_DIR}/src/main_create_training.cpp)
+
+target_include_directories(${PROJECT_NAME} PRIVATE include)
+set_property(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT ${PROJECT_NAME})
+
+target_link_libraries(${PROJECT_NAME} laszip)
+target_include_directories(${PROJECT_NAME} PRIVATE
+	libs/laszip)

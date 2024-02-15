@@ -21,6 +21,7 @@ build/laszip/Release/
 build/laszip/Debug/
 build/Release/laszip.dll
 build/
+build - Kopie/
 tools/heightmaps
 tools/ca13_heightmaps_2023.12.22.zip
 tools/ca13_heightmaps_2024.01.05_partial/
