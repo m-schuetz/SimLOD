@@ -17,14 +17,16 @@ using namespace std;
 
 namespace fs = filesystem;
 
-constexpr int numQueryPoints   = 10'000;
+//constexpr int numQueryPoints = 10; // 10'000;
+constexpr int numQueryPoints = 10'000;
 constexpr double pixelSize     = 10.0;
 constexpr int heightmapSize    = 64;
 
 
 mutex mtx;
 
-string pointcloud_dir = "E:/resources/pointclouds/CA13_las";
+//string pointcloud_dir = "E:\\datasets\\point clouds\\CA13_SAN_SIM_small";
+string pointcloud_dir = "E:\\datasets\\point clouds\\CA13_SAN_SIM";
 
 struct Point{
 	double x, y, z;
@@ -49,6 +51,8 @@ struct Heightmap{
 	Point queryPoint;
 	vec3 world_min;
 	vec3 world_max;
+	double sum[heightmapSize * heightmapSize];
+	int count[heightmapSize * heightmapSize];
 	float values[heightmapSize * heightmapSize];
 };
 
@@ -115,7 +119,10 @@ void saveHeightmaps(vector<Heightmap>& heightmaps, string outPath){
 		{
 			int pixelID = px + heightmapSize * py;
 
-			float height = heightmap.values[pixelID];
+			// float height = heightmap.values[pixelID];
+			float height = heightmap.sum[pixelID] / double(heightmap.count[pixelID]);
+			if (heightmap.count[pixelID] == 0)
+				height = std::numeric_limits<float>::quiet_NaN();
 
 			int R = 0;
 			int G = 255;
@@ -154,7 +161,10 @@ void dbg_dumpHeightmap(Heightmap& heightmap, string filename){
 	{
 		int pixelID = px + heightmapSize * py;
 
-		float height = heightmap.values[pixelID];
+		//float height = heightmap.values[pixelID];
+		float height = heightmap.sum[pixelID] / double(heightmap.count[pixelID]);
+		if (heightmap.count[pixelID] == 0)
+			height = std::numeric_limits<float>::quiet_NaN();
 
 		int R = 0;
 		int G = 255;
@@ -406,6 +416,8 @@ int main() {
 		heightmap.world_max = heightmap_worldspace_max;
 		for(int pixelID = 0; pixelID < heightmapSize * heightmapSize; pixelID++){
 			heightmap.values[pixelID] = std::numeric_limits<float>::quiet_NaN();
+			heightmap.count[pixelID] = 0;
+			heightmap.sum[pixelID] = 0.0;
 		}
 		heightmaps.push_back(heightmap);
 
@@ -454,6 +466,8 @@ int main() {
 
 					int pixelID = px + heightmapSize * py;
 
+					heightmap.count[pixelID]++;
+					heightmap.sum[pixelID] += point.z;
 					if (isnan(heightmap.values[pixelID])) {
 						heightmap.values[pixelID] = point.z;
 					}
