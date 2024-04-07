@@ -118,19 +118,24 @@ glm::mat4 transform_updatebound;
 Stats stats;
 void* h_stats_pinned = nullptr;
 
+double t_drop_start = 0.0;
+
 struct {
-	bool useHighQualityShading       = false;
+	bool useHighQualityShading       = true;
 	bool showBoundingBox             = false;
 	bool doUpdateVisibility          = true;
 	bool showPoints                  = true;
 	bool colorByNode                 = false;
 	bool colorByLOD                  = false;
+	bool colorWhite                  = false;
 	bool autoFocusOnLoad             = true;
 	bool benchmarkRendering          = false;
 	float LOD                        = 0.2f;
 	float minNodeSize                = 64.0f;
 	int pointSize                    = 1;
 	float fovy                       = 60.0f;
+	bool enableEDL                   = true;
+	float edlStrength                = 0.8f;
 } settings;
 
 struct PinnedMemPool{
@@ -225,12 +230,21 @@ bool requestColorFiltering         = false;
 float renderingDuration            = 0.0f;
 uint32_t numPointsUploaded         = 0;
 float loadStart                    = 0.0f;
+
 float kernelUpdateDuration         = 0.0f;
 float totalUpdateDuration          = 0.0f;
 double minKernelUpdateDuration     = Infinity;
 double maxKernelUpdateDuration     = 0.0;
 double avgKernelUpdateDuration     = 0.0;
 double cntKernelUpdateDuration     = 0.0;
+
+float kernelRenderDuration         = 0.0f;
+float totalRenderDuration          = 0.0f;
+double minKernelRenderDuration     = Infinity;
+double maxKernelRenderDuration     = 0.0;
+double avgKernelRenderDuration     = 0.0;
+double cntKernelRenderDuration     = 0.0;
+
 atomic_uint64_t numPointsTotal     = 0;
 atomic_uint64_t numPointsLoaded    = 0;
 atomic_uint64_t numBytesTotal      = 0;
@@ -291,24 +305,27 @@ Uniforms getUniforms(shared_ptr<GLRenderer> renderer){
 	memcpy(&uniforms.transform_updateBound, &transform_updatebound, sizeof(transform_updatebound));
 	memcpy(&uniforms.transformInv_updateBound, &transform_inv_updatebound, sizeof(transform_inv_updatebound));
 	
-	uniforms.width                  = static_cast<float>(renderer->width);
-	uniforms.height                 = static_cast<float>(renderer->height);
-	uniforms.fovy_rad               = 3.1415f * renderer->camera->fovy / 180.0;
-	uniforms.time                   = static_cast<float>(now());
-	uniforms.boxMin                 = float3{0.0f, 0.0f, 0.0f};
-	uniforms.boxMax                 = boxSize;
-	uniforms.frameCounter           = frameCounter;
-	uniforms.showBoundingBox        = settings.showBoundingBox;
-	uniforms.doUpdateVisibility     = settings.doUpdateVisibility;
-	uniforms.showPoints             = settings.showPoints;
-	uniforms.colorByNode            = settings.colorByNode;
-	uniforms.colorByLOD             = settings.colorByLOD;
-	uniforms.LOD                    = settings.LOD;
-	uniforms.minNodeSize            = settings.minNodeSize;
-	uniforms.pointSize              = settings.pointSize;
-	uniforms.useHighQualityShading  = settings.useHighQualityShading;
+	uniforms.width                    = static_cast<float>(renderer->width);
+	uniforms.height                   = static_cast<float>(renderer->height);
+	uniforms.fovy_rad                 = 3.1415f * renderer->camera->fovy / 180.0;
+	uniforms.time                     = static_cast<float>(now());
+	uniforms.boxMin                   = float3{0.0f, 0.0f, 0.0f};
+	uniforms.boxMax                   = boxSize;
+	uniforms.frameCounter             = frameCounter;
+	uniforms.showBoundingBox          = settings.showBoundingBox;
+	uniforms.doUpdateVisibility       = settings.doUpdateVisibility;
+	uniforms.showPoints               = settings.showPoints;
+	uniforms.colorByNode              = settings.colorByNode;
+	uniforms.colorByLOD               = settings.colorByLOD;
+	uniforms.colorWhite               = settings.colorWhite;
+	uniforms.LOD                      = settings.LOD;
+	uniforms.minNodeSize              = settings.minNodeSize;
+	uniforms.pointSize                = settings.pointSize;
+	uniforms.useHighQualityShading    = settings.useHighQualityShading;
 	uniforms.persistentBufferCapacity = persistentBufferCapacity;
 	uniforms.momentaryBufferCapacity  = momentaryBufferCapacity;
+	uniforms.enableEDL                = settings.enableEDL;
+	uniforms.edlStrength              = settings.edlStrength;
 
 	return uniforms;
 }
@@ -489,6 +506,7 @@ void renderCUDA(shared_ptr<GLRenderer> renderer){
 		& cudaprint.cptr
 	};
 
+	
 	auto res_launch = cuLaunchCooperativeKernel(cuda_program_render->kernels["kernel_render"],
 		numGroups, 1, 1,
 		workgroupSize, 1, 1,
@@ -501,6 +519,20 @@ void renderCUDA(shared_ptr<GLRenderer> renderer){
 	}
 
 	cuEventRecord(ce_render_end, 0);
+
+	// benchmark kernel- slows down overall loading!
+	if(requestBenchmark){ 
+		cuCtxSynchronize();
+
+		float duration;
+		cuEventElapsedTime(&duration, ce_render_start, ce_render_end);
+
+		kernelRenderDuration    += duration;
+		minKernelRenderDuration = std::min(minKernelRenderDuration, double(duration));
+		maxKernelRenderDuration = std::max(maxKernelRenderDuration, double(duration));
+		avgKernelRenderDuration = (cntKernelRenderDuration * avgKernelRenderDuration + duration) / (cntKernelRenderDuration + 1.0);
+		cntKernelRenderDuration += 1.0;
+	}
 
 	if(settings.benchmarkRendering){
 		cuCtxSynchronize();
@@ -549,7 +581,7 @@ void initCudaProgram(shared_ptr<GLRenderer> renderer){
 	size_t totalMem = 0;
 	cuMemGetInfo(&availableMem, &totalMem);
 
-	size_t cptr_buffer_persistent_bytes = static_cast<size_t>(static_cast<double>(availableMem) * 0.96);
+	size_t cptr_buffer_persistent_bytes = static_cast<size_t>(static_cast<double>(availableMem) * 0.80);
 	persistentBufferCapacity = cptr_buffer_persistent_bytes;
 	cuMemAlloc(&cptr_buffer_persistent, cptr_buffer_persistent_bytes);
 
@@ -620,6 +652,13 @@ void reload(){
 	maxKernelUpdateDuration = 0.0;
 	avgKernelUpdateDuration = 0.0;
 	cntKernelUpdateDuration = 0.0;
+
+	totalRenderDuration     = 0.0f;
+	kernelRenderDuration    = 0.0f;
+	minKernelRenderDuration = Infinity;
+	maxKernelRenderDuration = 0.0;
+	avgKernelRenderDuration = 0.0;
+	cntKernelRenderDuration = 0.0;
 
 	lock_guard<mutex> lock_batchesToProcess(mtx_batchesToProcess);
 	lock_guard<mutex> lock_batchesInPinnedMemory(mtx_batchesInPinnedMemory);
@@ -780,6 +819,10 @@ void spawnLoader(size_t i) {
 			bool everythingIsDone = batchStreamUploadIndex == numBatchesTotal;
 			bool processingLagsBehind = numPointsLoaded > stats.numPointsProcessed + BATCH_STREAM_SIZE * MAX_BATCH_SIZE;
 
+			// if (processingLagsBehind) {
+			// 	printfmt("processing lags behind\n");
+			// }
+
 			if (everythingIsDone || processingLagsBehind || resetInProgress.load()) {
 				std::this_thread::sleep_for(1ms);
 				continue;
@@ -813,6 +856,10 @@ void spawnLoader(size_t i) {
 			
 			if (batch.count > 0) {
 				// load points in batch
+
+				int batchID = batch.first / MAX_BATCH_SIZE;
+				double t_start = now();
+				// printfmt("start loading batch {} at {:.3f} \n", batchID, t_start);
 
 				numThreadsLoading++;
 				if(iEndsWith(batch.file, "las")){
@@ -859,6 +906,12 @@ void spawnLoader(size_t i) {
 						point.rgba[0] = rgb[0] > 255 ? rgb[0] / 256 : rgb[0];
 						point.rgba[1] = rgb[1] > 255 ? rgb[1] / 256 : rgb[1];
 						point.rgba[2] = rgb[2] > 255 ? rgb[2] / 256 : rgb[2];
+						
+						//int intensity = laz_point->intensity;
+						//point.rgba[0] = intensity / 200;
+						//point.rgba[1] = intensity / 200;
+						//point.rgba[2] = intensity / 200;
+
 
 						pinnedPoints[i] = point;
 					}
@@ -886,6 +939,10 @@ void spawnLoader(size_t i) {
 					lock_guard<mutex> lock_batchesInPinnedMemory(mtx_batchesInPinnedMemory);
 					batchesInPinnedMemory.push_back(batch);
 				}
+
+				// double t_end = now();
+				// double millies = (t_end - t_start) * 1000.0;
+				// printfmt("finished loading batch {} at {:.3f}. duration: {:.3f} ms \n", batchID, t_end, millies);
 
 				numThreadsLoading--;
 			}else {
@@ -1036,6 +1093,13 @@ int main(){
 	// renderer->controls->radius = 929.239;
 	// renderer->controls->target = { 606.560, 385.040, 13.848, };
 
+	// position: 448.8209204653559, 768.7683535080489, 23.676426584479366 
+	// renderer->controls->yaw    = -4.660;
+	// renderer->controls->pitch  = -0.293;
+	// renderer->controls->radius = 94.341;
+	// renderer->controls->target = { 354.609, 764.038, 25.101, };
+
+
 	initCuda();
 	initCudaProgram(renderer);
 
@@ -1055,6 +1119,9 @@ int main(){
 
 	renderer->onFileDrop([&](vector<string> files){
 		vector<string> pointCloudFiles;
+
+		t_drop_start = now();
+		printfmt("drop at {:.3f} \n", now());
 
 		for(auto file : files){
 			printfmt("dropped: {} \n", file);
@@ -1136,6 +1203,16 @@ int main(){
 
 			statsAge = static_cast<int>(renderer->frameCount) - stats.frameID;
 
+			static uint64_t previousNumPointsProcessed = 0;
+			uint64_t numPointsProcessed = stats.numPointsProcessed;
+
+			// if(numPointsProcessed != previousNumPointsProcessed){
+			// 	printfmt("processed {} at {:.3f}. since drop: {:.3f} \n", numPointsProcessed, now(), now() - t_drop_start);
+
+			// 	previousNumPointsProcessed = numPointsProcessed;
+			// }
+			
+
 			bool newLastBatchFinishedDevice = stats.numPointsProcessed == uint64_t(numPointsTotal);
 			if(stats.memCapacityReached){
 				newLastBatchFinishedDevice = true;
@@ -1157,14 +1234,16 @@ int main(){
 
 			ImGui::Begin("Settings");
 			// ImGui::Text("Test abc");
-			ImGui::Checkbox("Show Bounding Box",     &settings.showBoundingBox);
-			ImGui::Checkbox("Update Visibility",     &settings.doUpdateVisibility);
-			ImGui::Checkbox("Show Points",           &settings.showPoints);
-			ImGui::Checkbox("Color by Node",         &settings.colorByNode);
-			ImGui::Checkbox("Color by LOD",          &settings.colorByLOD);
-			ImGui::Checkbox("High-Quality-Shading",  &settings.useHighQualityShading);
-			ImGui::Checkbox("Auto-focus on load",    &settings.autoFocusOnLoad);
-			ImGui::Checkbox("Benchmark Rendering",   &settings.benchmarkRendering);
+			ImGui::Checkbox("Show Bounding Box",        &settings.showBoundingBox);
+			ImGui::Checkbox("Update Visibility",        &settings.doUpdateVisibility);
+			ImGui::Checkbox("Show Points",              &settings.showPoints);
+			ImGui::Checkbox("Color by Node",            &settings.colorByNode);
+			ImGui::Checkbox("Color by LOD",             &settings.colorByLOD);
+			// ImGui::Checkbox("Color white",              &settings.colorWhite);
+			ImGui::Checkbox("enable Eye Dome Lighting", &settings.enableEDL);
+			ImGui::Checkbox("High-Quality-Shading",     &settings.useHighQualityShading);
+			ImGui::Checkbox("Auto-focus on load",       &settings.autoFocusOnLoad);
+			ImGui::Checkbox("Benchmark Rendering",      &settings.benchmarkRendering);
 
 			if(ImGui::Button("Reset")){
 				requestReset = true;
@@ -1285,8 +1364,9 @@ int main(){
 			}
 			
 			ImGui::SliderFloat("minNodeSize", &settings.minNodeSize, 32.0f, 1024.0f);
-			ImGui::SliderInt("Point Size", &settings.pointSize, 1, 5);
+			ImGui::SliderInt("Point Size", &settings.pointSize, 1, 10);
 			ImGui::SliderFloat("FovY", &settings.fovy, 20.0f, 100.0f);
+			ImGui::SliderFloat("EDL Strength", &settings.edlStrength, 0.0f, 3.0f);
 
 			if(ImGui::Button("Copy Camera")){
 				auto controls = renderer->controls;
@@ -1432,6 +1512,8 @@ int main(){
 				{"GB/s (disk I/O)          ", toGB(gbs_file)                                        , format("{:.1f}", gbs_file / GB)},
 				{"GB/s (gpu)               ", toGB(gbs_gpu)                                         , format("{:.1f}", gbs_gpu / GB)},
 				{"=========================", " "                                                   , " "},
+				{"#render kernel duration  ", toMS(kernelRenderDuration)                            , format("{:.1f}", kernelRenderDuration)},
+				{"=========================", " "                                                   , " "},
 				{"rendering duration       ", toMS(renderingDuration)                               , format("{:.1f}", renderingDuration)},
 				{"    points / sec         ", toB(millionPointsSecRendered)                        , format("{:.1f}", millionPointsSecRendered / B)},
 				{"    voxels / sec         ", toB(millionVoxelsSecRendered)                        , format("{:.1f}", millionVoxelsSecRendered / B)},
@@ -1442,6 +1524,9 @@ int main(){
 				{"    #inner               ", toIntString(stats.numInner)                           , format("{}", stats.numInner)},
 				{"    #leaves (nonempty)   ", toIntString(stats.numNonemptyLeaves)                  , format("{}", stats.numNonemptyLeaves)},
 				{"    #leaves (empty)      ", toIntString(numEmptyLeaves)                           , format("{}", numEmptyLeaves)},
+				{"#chunks                  ", toIntString(stats.numNodes)                           , format("{}", stats.numNodes)},
+				{"    #voxels              ", toIntString(stats.numChunksVoxels)                    , format("{}", stats.numChunksVoxels)},
+				{"    #points              ", toIntString(stats.numChunksPoints)                    , format("{}", stats.numChunksPoints)},
 				{"#samples                 ", toM(stats.numPoints + stats.numVoxels)                , format("{:.1f}", (stats.numPoints + stats.numVoxels) / M)},
 				{"    #points              ", toM(stats.numPoints)                                  , format("{:.1f}", stats.numPoints / M)},
 				{"    #voxels              ", toM(stats.numVoxels)                                  , format("{:.1f}", stats.numVoxels / M)},

@@ -21,3 +21,7 @@ build/laszip/Release/
 build/laszip/Debug/
 build/Release/laszip.dll
 build/
+.generated_cuda_programs/progressive_octree_voxels.cu__utils.cu/cubin
+.generated_cuda_programs/render.cu__utils.cu/cubin
+.generated_cuda_programs/reset.cu__utils.cu/cubin
+build_old/

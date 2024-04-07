@@ -31,6 +31,7 @@ struct Uniforms{
 	bool showPoints;
 	bool colorByNode;
 	bool colorByLOD;
+	bool colorWhite;
 	bool doUpdateVisibility;
 	bool doProgressive;
 	float LOD;
@@ -38,6 +39,8 @@ struct Uniforms{
 	float minNodeSize;
 	int pointSize;
 	bool updateStats;
+	bool enableEDL;
+	float edlStrength;
 };
 
 struct Stats{
@@ -55,6 +58,8 @@ struct Stats{
 	uint32_t numVisibleLeaves           = 0;
 	uint32_t numVisiblePoints           = 0;
 	uint32_t numVisibleVoxels           = 0;
+	uint32_t numChunksPoints            = 0;
+	uint32_t numChunksVoxels            = 0;
 
 	uint32_t batchletIndex              = 0;
 	uint64_t numPointsProcessed         = 0;

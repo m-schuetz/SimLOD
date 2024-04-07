@@ -2,15 +2,35 @@
 
 #include <string>
 #include <unordered_map>
-
 #include "unsuck.hpp"
 #include "nvrtc.h"
+#include <nvJitLink.h>
 #include <cmath>
 #include "cuda.h"
 
 using std::string;
 
 using namespace std;
+
+#define NVJITLINK_SAFE_CALL(h,x)                                  \
+do {                                                              \
+   nvJitLinkResult result = x;                                    \
+   if (result != NVJITLINK_SUCCESS) {                             \
+      std::cerr << "\nerror: " #x " failed with error "           \
+                << result << '\n';                                \
+      size_t lsize;                                               \
+      result = nvJitLinkGetErrorLogSize(h, &lsize);               \
+      if (result == NVJITLINK_SUCCESS && lsize > 0) {             \
+         char *log = (char*)malloc(lsize);                        \
+         result = nvJitLinkGetErrorLog(h, log);                   \
+         if (result == NVJITLINK_SUCCESS) {                       \
+            std::cerr << "error: " << log << '\n';                \
+            free(log);                                            \
+         }                                                        \
+      }                                                           \
+      exit(1);                                                    \
+   }                                                              \
+} while(0)
 
 struct CudaModule{
 
@@ -24,11 +44,15 @@ struct CudaModule{
 	string name = "";
 	bool compiled = false;
 	bool success = false;
+	
 	size_t ptxSize = 0;
 	char* ptx = nullptr;
 
-	size_t nvvmSize;
-	char *nvvm = nullptr;
+	size_t ltoirSize = 0;
+	char* ltoir = nullptr;
+
+	//size_t nvvmSize;
+	//char *nvvm = nullptr;
 
 	CudaModule(string path, string name){
 		this->path = path;
@@ -38,52 +62,48 @@ struct CudaModule{
 	void compile(){
 		auto tStart = now();
 
-		// cout << "================================================================================" << endl;
-		// cout << "=== COMPILING: " << fs::path(path).filename().string() << endl;
-		// cout << "================================================================================" << endl;
-		printfmt("compiling {} ", fs::path(path).filename().string());
-
-		const char* cuda_path_cstr = std::getenv("CUDA_PATH");
-		std::string cuda_path;
-		if (cuda_path_cstr) {
-			cuda_path = std::string(cuda_path_cstr);
-			if (!cuda_path.empty()) {
-				std::cout << "\nCUDA_PATH is set to: " << cuda_path << std::endl;
-			} else {
-				std::cout << "\nCUDA_PATH is empty. Please set it." << std::endl;
-				exit(-1);
-			}
-		} else {
-			std::cout << "\nCUDA_PATH is not set. Please set it." << std::endl;
-			exit(-1);
-		}
-
-		const string cuda_include = "-I " + cuda_path + "/include";
-		const string dir = fs::path(path).parent_path().string();
-		const string optInclude = "-I " + dir;
-
-		nvrtcProgram prog;
-		string source = readFile(path);
-		nvrtcCreateProgram(&prog, source.c_str(), name.c_str(), 0, NULL, NULL);
+		cout << "================================================================================" << endl;
+		cout << "=== COMPILING: " << fs::path(path).filename().string() << endl;
+		cout << "================================================================================" << endl;
 
 		success = false;
 
-		std::vector<const char*> opts = {
-			// "--gpu-architecture=compute_75",
-			"--gpu-architecture=compute_86",
+		string dir = fs::path(path).parent_path().string();
+		// string optInclude = "-I " + dir;
+
+		string cuda_path = std::getenv("CUDA_PATH");
+		// string cuda_include = "-I " + cuda_path + "/include";
+
+		string optInclude = std::format("-I {}", dir).c_str();
+		string cuda_include = std::format("-I {}/include", cuda_path);
+		string cudastd_include = std::format("-I {}/include/cuda/std", cuda_path);
+		
+		nvrtcProgram prog;
+		string source = readFile(path);
+		nvrtcCreateProgram(&prog, source.c_str(), name.c_str(), 0, NULL, NULL);
+		std::vector<const char*> opts = { 
+			"--gpu-architecture=compute_89",
+			// "--gpu-architecture=compute_86",
 			"--use_fast_math",
 			"--extra-device-vectorization",
 			"-lineinfo",
-			optInclude.c_str(),
 			cuda_include.c_str(),
+			optInclude.c_str(),
+			"-I ./",
 			"--relocatable-device-code=true",
 			"-default-device",
 			"-dlto", 
-			// "--dopt=on",
-			"--std=c++17"
+			"--std=c++20",
+			"--disable-warnings",
 		};
 
-		nvrtcResult res = nvrtcCompileProgram(prog, static_cast<int>(opts.size()), opts.data());
+
+		for(auto opt : opts){
+			cout << opt << endl;
+		}
+		cout << "====" << endl;
+
+		nvrtcResult res = nvrtcCompileProgram(prog, opts.size(), opts.data());
 		
 		if (res != NVRTC_SUCCESS)
 		{
@@ -99,23 +119,19 @@ struct CudaModule{
 			}
 		}
 
-		if(nvvmSize > 0){
-			delete[] nvvm;
-			nvvmSize = 0;
-		}
+		nvrtcGetLTOIRSize(prog, &ltoirSize);
+		ltoir = new char[ltoirSize];
+		nvrtcGetLTOIR(prog, ltoir);
 
-		nvrtcGetNVVMSize(prog, &nvvmSize);
-		nvvm = new char[nvvmSize];
-		nvrtcGetNVVM(prog, nvvm);
-		// Destroy the program.
+		printfmt("compiled ltoir. size: {} byte \n", ltoirSize);
+
 		nvrtcDestroyProgram(&prog);
 
 		compiled = true;
 		success = true;
 
-		// printElapsedTime("compiled " + name, tStart);
-		auto duration = now() - tStart;
-		printfmt("- compiled in {:.3}s \n", duration);
+		printElapsedTime("compile " + name, tStart);
+
 	}
 
 };
@@ -138,6 +154,8 @@ struct CudaModularProgram{
 
 	CUmodule mod;
 	// CUfunction kernel = nullptr;
+	void* cubin;
+	size_t cubinSize;
 
 	vector<std::function<void(void)>> compileCallbacks;
 
@@ -153,9 +171,6 @@ struct CudaModularProgram{
 
 		this->kernelNames = kernelNames;
 
-		printfmt("================================================================================\n");
-		printfmt("building CUDA program \n");
-
 		for(auto modulePath : modulePaths){
 
 			string moduleName = fs::path(modulePath).filename().string();
@@ -164,9 +179,6 @@ struct CudaModularProgram{
 			module->compile();
 
 			monitorFile(modulePath, [&, module]() {
-				printfmt("================================================================================\n");
-				printfmt("building CUDA program \n");
-
 				module->compile();
 				link();
 			});
@@ -179,9 +191,9 @@ struct CudaModularProgram{
 
 	void link(){
 
-		// cout << "================================================================================" << endl;
-		// cout << "=== LINKING" << endl;
-		// cout << "================================================================================" << endl;
+		cout << "================================================================================" << endl;
+		cout << "=== LINKING" << endl;
+		cout << "================================================================================" << endl;
 		
 		auto tStart = now();
 
@@ -193,58 +205,44 @@ struct CudaModularProgram{
 
 		float walltime;
 		constexpr uint32_t v_optimization_level = 1;
-		constexpr size_t logSize = 8192;
+		constexpr uint32_t logSize = 8192;
 		char info_log[logSize];
 		char error_log[logSize];
-
-		vector<CUjit_option> options = {
-			CU_JIT_LTO,
-			CU_JIT_WALL_TIME,
-			CU_JIT_OPTIMIZATION_LEVEL,
-			CU_JIT_INFO_LOG_BUFFER,
-			CU_JIT_INFO_LOG_BUFFER_SIZE_BYTES,
-			CU_JIT_ERROR_LOG_BUFFER,
-			CU_JIT_ERROR_LOG_BUFFER_SIZE_BYTES,
-			CU_JIT_LOG_VERBOSE,
-			// CU_JIT_FAST_COMPILE // CUDA internal only (?)
-		};
-
-		vector<void*> optionVals = {
-			(void*) 1,
-			(void*) &walltime,
-			(void*) 4,
-			(void*) info_log,
-			(void*) logSize,
-			(void*) error_log,
-			(void*) logSize,
-			(void*) 1,
-			// (void*) 1
-		};
 		
 		CUlinkState linkState;
 
-		int numOptions = static_cast<int>(options.size());
-		cu_checked(cuLinkCreate(numOptions, options.data(), optionVals.data(), &linkState));
+		CUdevice cuDevice;
+		cuDeviceGet(&cuDevice, 0);
+
+		int major = 0;
+		int minor = 0;
+		cuDeviceGetAttribute(&major, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR, cuDevice);
+		cuDeviceGetAttribute(&minor, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR, cuDevice);
+
+		int arch = major * 10 + minor;
+		string strArch = std::format("-arch=sm_{}", arch);
+
+		const char *lopts[] = {"-dlto", strArch.c_str()};
+
+		nvJitLinkHandle handle;
+		nvJitLinkCreate(&handle, 2, lopts);
 
 		for(auto module : modules){
-			cu_checked(cuLinkAddData(linkState, CU_JIT_INPUT_NVVM,
-				module->nvvm, module->nvvmSize, module->name.c_str(),
-				0, 0, 0));
+			NVJITLINK_SAFE_CALL(handle, nvJitLinkAddData(handle, NVJITLINK_INPUT_LTOIR, (void *)module->ltoir, module->ltoirSize, "module label"));
 		}
 
-		size_t cubinSize;
-		void *cubin;
+		NVJITLINK_SAFE_CALL(handle, nvJitLinkComplete(handle));
+		NVJITLINK_SAFE_CALL(handle, nvJitLinkGetLinkedCubinSize(handle, &cubinSize));
 
-		cu_checked(cuLinkComplete(linkState, &cubin, &cubinSize));
+		cubin = malloc(cubinSize);
+		NVJITLINK_SAFE_CALL(handle, nvJitLinkGetLinkedCubin(handle, cubin));
+		NVJITLINK_SAFE_CALL(handle, nvJitLinkDestroy(&handle));
 
-		// {
-		// 	printf("link duration: %f ms \n", walltime);
-			printf("link error message: %s \n", error_log);
-			printf("link info message: %s \n", info_log);
-		// }
+		static int cubinID = 0;
+		// writeBinaryFile(format("./program_{}.cubin", cubinID), (uint8_t*)cubin, cubinSize);
+		cubinID++;
 
 		cu_checked(cuModuleLoadData(&mod, cubin));
-		//cu_checked(cuModuleGetFunction(&kernel, mod, "kernel"));
 
 		for(string kernelName : kernelNames){
 			CUfunction kernel;
@@ -257,10 +255,8 @@ struct CudaModularProgram{
 			callback();
 		}
 
-		// printElapsedTime("link duration: ", tStart);
-		auto duration = now() - tStart;
-		printfmt("link duration: {:.3} \n", duration);
-		printfmt("================================================================================\n");
+		// printElapsedTime("cuda link duration: ", tStart);
+
 	}
 
 	void onCompile(std::function<void(void)> callback){

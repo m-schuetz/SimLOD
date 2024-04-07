@@ -905,7 +905,7 @@ void kernel_construct(
 			);
 
 			stats->memCapacityReached = true;
-		}else{
+		}else if(!memCapacityReached){
 			stats->memCapacityReached = false;
 		}
 
@@ -960,6 +960,8 @@ void kernel_construct(
 	uint32_t* counter_nonempty_leaves = allocator->alloc<uint32_t*>(4);
 	uint32_t* counter_points          = allocator->alloc<uint32_t*>(4);
 	uint32_t* counter_voxels          = allocator->alloc<uint32_t*>(4);
+	uint32_t* counter_chunks_points   = allocator->alloc<uint32_t*>(4);
+	uint32_t* counter_chunks_voxels   = allocator->alloc<uint32_t*>(4);
 
 	if(grid.thread_rank() == 0){
 		*counter_inner           = 0;
@@ -967,6 +969,8 @@ void kernel_construct(
 		*counter_nonempty_leaves = 0;
 		*counter_points          = 0;
 		*counter_voxels          = 0;
+		*counter_chunks_points   = 0;
+		*counter_chunks_voxels   = 0;
 	}
 	grid.sync();
 
@@ -976,6 +980,7 @@ void kernel_construct(
 		if(node->isLeafFn()){
 			atomicAdd(counter_leaves, 1);
 			atomicAdd(counter_points, node->numPoints);
+			atomicAdd(counter_chunks_points, (node->numPoints + POINTS_PER_CHUNK - 1) / POINTS_PER_CHUNK);
 
 			if(node->numPoints > 0){
 				atomicAdd(counter_nonempty_leaves, 1);
@@ -983,6 +988,7 @@ void kernel_construct(
 		}else{
 			atomicAdd(counter_inner, 1);
 			atomicAdd(counter_voxels, node->numVoxels);
+			atomicAdd(counter_chunks_voxels, (node->numVoxels + POINTS_PER_CHUNK - 1) / POINTS_PER_CHUNK);
 		}
 
 	});
@@ -995,6 +1001,8 @@ void kernel_construct(
 		stats->numNonemptyLeaves         = *counter_nonempty_leaves;
 		stats->numPoints                 = *counter_points;
 		stats->numVoxels                 = *counter_voxels;
+		stats->numChunksPoints           = *counter_chunks_points;
+		stats->numChunksVoxels           = *counter_chunks_voxels;
 		stats->allocatedBytes_momentary  = allocator->offset;
 		stats->allocatedBytes_persistent = allocator_persistent->offset;
 		stats->frameID                   = uniforms.frameCounter;
