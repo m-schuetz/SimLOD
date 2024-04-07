@@ -147,8 +147,8 @@ The <a href="https://doi.org/10.5069/G9CN71V5">full San Simeon data set (18 bill
     year =       "2024",
     month =      may,
     journal =    "Proceedings of the ACM in Computer Graphics and Interactive Techniques",
-	volume =     "7",
-	note =       "Source Code: https://github.com/m-schuetz/SimLOD",
+    volume =     "7",
+    note =       "Source Code: https://github.com/m-schuetz/SimLOD",
     keywords =   "point-based rendering",
 }
 </pre>
