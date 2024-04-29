@@ -308,6 +308,8 @@ void rasterizeTriangles(
 
 	auto grid = cg::this_grid();
 	auto block = cg::this_thread_block();
+
+	// return;
 	
 	// uint32_t* processedTriangles = allocator->alloc<uint32_t*>(4);
 	if(grid.thread_rank() == 0){

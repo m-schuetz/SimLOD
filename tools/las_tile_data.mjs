@@ -122,7 +122,7 @@ async function processLas(file, outPath, outCSV){
 		let line = `${x.toFixed(2)}, ${y.toFixed(2)}, ${z.toFixed(2)}, `;
 
 		await fsp.appendFile(outPath, line);
-		await fsp.appendFile(outCSV, `${x.toFixed(2)}, ${y.toFixed(2)}, ${z.toFixed(2)} \n`);
+		await fsp.appendFile(outCSV, `${x.toFixed(2)}, ${y.toFixed(2)}, ${z.toFixed(2)}, ${r}, ${g}, ${b} \n`);
 
 		numPointsProcessed += 50_000;
 	}
@@ -150,7 +150,7 @@ async function processLas(file, outPath, outCSV){
 // let file = "./test.las";
 // let file = "E:/resources/pointclouds/CA13_las/ot_35120A4201B_1_1.las";
 let outPath = "./report.txt";
-let outCSV = "./chunkPoints.csv";
+let outCSV = "./chunkPoints_2.csv";
 
 // let files = [
 // 	"E:/resources/pointclouds/CA13_las/ot_35120A4201B_1_1.las",

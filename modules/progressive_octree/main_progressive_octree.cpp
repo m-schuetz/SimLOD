@@ -529,8 +529,8 @@ int main(){
 	initCuda();
 	initCudaProgram(renderer);
 
-	int numLoaders = 32;
-	for(int i = 0; i < numLoaders; i++){
+	numThreads = 32;
+	for(int i = 0; i < numThreads; i++){
 		spawnLoader();
 	}
 
@@ -539,7 +539,8 @@ int main(){
 
 	{ // test data
 
-		vector<string> files = listFiles("E:/resources/pointclouds/CA13_las");
+		// vector<string> files = listFiles("E:/resources/pointclouds/CA13_las");
+		vector<string> files = listFiles("D:/resources/pointclouds/CA13_las_tmp");
 
 
 		float3 acc_min = { Infinity, Infinity, Infinity };

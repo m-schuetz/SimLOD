@@ -1,9 +1,24 @@
 cmake_minimum_required(VERSION 3.22)
+set(CMAKE_CXX_STANDARD 20)
+
+
+project(CreateTraining)
+
+add_executable(${PROJECT_NAME}
+    ${PROJECT_SOURCE_DIR}/include/unsuck_platform_specific.cpp
+    ${PROJECT_SOURCE_DIR}/src/main_create_training.cpp)
+
+target_include_directories(${PROJECT_NAME} PRIVATE include)
+set_property(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT ${PROJECT_NAME})
+
+target_link_libraries(${PROJECT_NAME} laszip)
+target_include_directories(${PROJECT_NAME} PRIVATE
+	libs/laszip)
+
+
 project(SimLOD)
 
 include(FetchContent)
-
-set(CMAKE_CXX_STANDARD 20)
 
 option(SimLOD_CreateCUDASymlinks "Create symbolic links instead of copying CUDA files." OFF)
 
@@ -131,18 +146,7 @@ else ()
 		COMMENT "POST BUILD: creating symlink for modules folder")
 endif (symlinksSupported OR NOT SimLOD_CreateCUDASymlinks)
 
+# set workdir to ../$(SolutionDir), so that .cu files can be monitored/reloaded/compiled
+set_property(TARGET ${PROJECT_NAME} PROPERTY VS_DEBUGGER_WORKING_DIRECTORY "$(SolutionDir)../..")
 
 
-
-project(CreateTraining)
-
-add_executable(${PROJECT_NAME}
-    ${PROJECT_SOURCE_DIR}/include/unsuck_platform_specific.cpp
-    ${PROJECT_SOURCE_DIR}/src/main_create_training.cpp)
-
-target_include_directories(${PROJECT_NAME} PRIVATE include)
-set_property(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT ${PROJECT_NAME})
-
-target_link_libraries(${PROJECT_NAME} laszip)
-target_include_directories(${PROJECT_NAME} PRIVATE
-	libs/laszip)
