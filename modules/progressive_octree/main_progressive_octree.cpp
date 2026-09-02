@@ -32,6 +32,13 @@ using namespace fmt;
 
 using namespace std;
 
+// 双显卡(Optimus/可切换显卡)笔记本：强制 OpenGL 渲染走独立显卡。
+// 否则 GL 上下文落在核显上，CUDA-GL interop 的 cuGraphicsGLRegisterImage 会静默失败，
+// 表现为 kernel 正常运行、stats 正常，但画面全黑。
+// 必须以 EXE 导出形式存在，驱动在创建 GL 上下文前读取。
+extern "C" __declspec(dllexport) unsigned long NvOptimusEnablement = 0x00000001;
+extern "C" __declspec(dllexport) int AmdPowerXpressRequestHighPerformance = 1;
+
 constexpr uint64_t PINNED_MEM_POOL_SIZE = 200;         // pool of pointers to batches of pinned memory
 constexpr uint64_t BATCH_STREAM_SIZE    = 50;          // ring buffer of batches that are async streamed to GPU
 constexpr uint64_t MAX_BATCH_SIZE       = 1'000'000;   // each loaded batch comprises <size> points
@@ -469,21 +476,37 @@ void renderCUDA(shared_ptr<GLRenderer> renderer){
 	static bool registered = false;
 	static GLuint registeredHandle = -1;
 
-	cuGraphicsGLRegisterImage(
-		&cugl_colorbuffer, 
-		renderer->view.framebuffer->colorAttachments[0]->handle, 
-		GL_TEXTURE_2D, 
+	// interop 链路任一步静默失败都会导致画面全黑，逐级检查并打印
+	auto checkCudaError = [](CUresult result, const char* what){
+		if(result != CUDA_SUCCESS){
+			const char* str;
+			cuGetErrorString(result, &str);
+			printfmt("CUDA interop error in {}: {} \n", what, str);
+		}
+	};
+
+	CUresult r;
+
+	r = cuGraphicsGLRegisterImage(
+		&cugl_colorbuffer,
+		renderer->view.framebuffer->colorAttachments[0]->handle,
+		GL_TEXTURE_2D,
 		CU_GRAPHICS_REGISTER_FLAGS_WRITE_DISCARD);
+	checkCudaError(r, "cuGraphicsGLRegisterImage");
 
 	// map OpenGL resources to CUDA
 	vector<CUgraphicsResource> dynamic_resources = {cugl_colorbuffer};
-	cuGraphicsMapResources(static_cast<int>(dynamic_resources.size()), dynamic_resources.data(), ((CUstream)CU_STREAM_DEFAULT));
+	r = cuGraphicsMapResources(static_cast<int>(dynamic_resources.size()), dynamic_resources.data(), ((CUstream)CU_STREAM_DEFAULT));
+	checkCudaError(r, "cuGraphicsMapResources");
 
 	CUDA_RESOURCE_DESC res_desc = {};
 	res_desc.resType = CUresourcetype::CU_RESOURCE_TYPE_ARRAY;
-	cuGraphicsSubResourceGetMappedArray(&res_desc.res.array.hArray, cugl_colorbuffer, 0, 0);
+	r = cuGraphicsSubResourceGetMappedArray(&res_desc.res.array.hArray, cugl_colorbuffer, 0, 0);
+	checkCudaError(r, "cuGraphicsSubResourceGetMappedArray");
+
 	CUsurfObject output_surf;
-	cuSurfObjectCreate(&output_surf, &res_desc);
+	r = cuSurfObjectCreate(&output_surf, &res_desc);
+	checkCudaError(r, "cuSurfObjectCreate");
 
 	cuEventRecord(ce_render_start, 0);
 
