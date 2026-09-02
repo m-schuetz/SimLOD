@@ -5,6 +5,11 @@ include(FetchContent)
 
 set(CMAKE_CXX_STANDARD 20)
 
+# 中文 Windows (CP936) 下 vendored 库中的 UTF-8 字符会导致 C4819/C2001
+if(MSVC)
+	add_compile_options(/utf-8)
+endif()
+
 option(SimLOD_CreateCUDASymlinks "Create symbolic links instead of copying CUDA files." OFF)
 
 # Target SimLOD
@@ -43,11 +48,16 @@ target_include_directories(${PROJECT_NAME} PRIVATE
 ## CUDA toolkit
 find_package(CUDAToolkit 11.8 REQUIRED)
 target_include_directories(${PROJECT_NAME} PRIVATE
-	CUDAToolkit_INCLUDE_DIRS)
+	${CUDAToolkit_INCLUDE_DIRS})
 
 target_link_libraries(${PROJECT_NAME}
 	CUDA::cuda_driver
 	CUDA::nvrtc)
+
+## CudaModularProgram 用 nvJitLink 做 LTO 链接（CUDA 11.8 精简安装缺该组件，12.x 自带）
+if(TARGET CUDA::nvJitLink)
+	target_link_libraries(${PROJECT_NAME} CUDA::nvJitLink)
+endif()
 
 ## OpenGL
 find_package(OpenGL REQUIRED)
@@ -62,6 +72,8 @@ target_include_directories(${PROJECT_NAME} PRIVATE
 	libs/glew/include)
 target_sources(${PROJECT_NAME} PRIVATE
 	libs/glew/glew.c)
+# 自带源码静态编译 glew，避免头文件 dllimport 声明与系统 glew32.lib 冲突 (LNK2005)
+target_compile_definitions(${PROJECT_NAME} PRIVATE GLEW_STATIC)
 
 ## GLFW
 include(cmake/glfw.cmake)

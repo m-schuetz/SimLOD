@@ -739,8 +739,9 @@ template <typename... Args>
 inline void printfmt(std::string_view fmt, const Args&... args) {
 #ifdef __cpp_lib_format
 	struct thousandsSeparator : std::numpunct<char> {
-		char_type do_thousands_sep() const override { return '\''; }
-		string_type do_grouping() const override { return "\3"; }
+		// MSVC: 函数模板内局部类中基类的 char_type/string_type 会被错误地按依赖名实例化，必须写显式类型
+		char do_thousands_sep() const override { return '\''; }
+		std::string do_grouping() const override { return "\3"; }
 	};
 	auto thousands = std::make_unique<thousandsSeparator>();
 	auto locale = std::locale(std::cout.getloc(), thousands.release());
