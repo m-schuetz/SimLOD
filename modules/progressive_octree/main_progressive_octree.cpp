@@ -1085,7 +1085,7 @@ void spawnUploader(shared_ptr<GLRenderer> renderer) {
 	setThreadPriorityHigh(t);
 }
 
-int main(){
+int main(int argc, char** argv){
 
 	auto renderer = make_shared<GLRenderer>();
 	auto cpu = getCpuData();
@@ -1171,6 +1171,15 @@ int main(){
 			};
 		}
 	});
+
+	// 命令行直接加载数据，便于自动化测试（与拖放等价；必须在 onFileDrop 注册之后调用）
+	if(argc > 1){
+		vector<string> files;
+		for(int i = 1; i < argc; i++){
+			files.push_back(argv[i]);
+		}
+		renderer->fileDropListeners.back()(files);
+	}
 
 	auto update = [&](){
 		cudaprint.update();
