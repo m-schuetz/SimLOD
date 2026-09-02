@@ -77,13 +77,21 @@ struct CudaModule{
 		string optInclude = std::format("-I {}", dir).c_str();
 		string cuda_include = std::format("-I {}/include", cuda_path);
 		string cudastd_include = std::format("-I {}/include/cuda/std", cuda_path);
-		
+
+		// LTO IR 的虚拟架构不得高于链接目标 sm 架构，硬编码 compute_89 在 sm_86 等
+		// 更老架构上会报 "LTOIR arch newer than target arch"，按 0 号卡实际计算能力生成
+		CUdevice cuDevice;
+		cuDeviceGet(&cuDevice, 0);
+		int ccMajor = 0, ccMinor = 0;
+		cuDeviceGetAttribute(&ccMajor, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR, cuDevice);
+		cuDeviceGetAttribute(&ccMinor, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR, cuDevice);
+		string optArch = std::format("--gpu-architecture=compute_{}{}", ccMajor, ccMinor);
+
 		nvrtcProgram prog;
 		string source = readFile(path);
 		nvrtcCreateProgram(&prog, source.c_str(), name.c_str(), 0, NULL, NULL);
-		std::vector<const char*> opts = { 
-			"--gpu-architecture=compute_89",
-			// "--gpu-architecture=compute_86",
+		std::vector<const char*> opts = {
+			optArch.c_str(),
 			"--use_fast_math",
 			"--extra-device-vectorization",
 			"-lineinfo",
@@ -92,7 +100,14 @@ struct CudaModule{
 			"-I ./",
 			"--relocatable-device-code=true",
 			"-default-device",
-			"-dlto", 
+			"-dlto",
+			// 本项目不使用半精度；CUDA 12.5 的 NVRTC prelude 会把 __half/bf16 转换构造
+			// 函数编成强符号，多模块 LTO 链接时报 "symbol multiply defined"
+			"-D__CUDA_NO_HALF_OPERATORS__",
+			"-D__CUDA_NO_HALF_CONVERSIONS__",
+			"-D__CUDA_NO_HALF2_OPERATORS__",
+			"-D__CUDA_NO_BFLOAT16_CONVERSIONS__",
+			"-D__CUDA_NO_BFLOAT16_OPERATORS__",
 			"--std=c++20",
 			"--disable-warnings",
 		};
