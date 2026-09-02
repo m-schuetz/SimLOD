@@ -50,6 +50,23 @@ struct Lines{
 	Point* vertices;
 };
 
+// ============================================================================
+// GPU 布局契约锁
+//
+// 本文件由 NVRTC 在运行时编译，宿主 exe 由 MSVC 编译，两侧仅靠字段布局达成
+// 默契：CPU 按此布局写 pinned memory → cuMemcpyHtoD 原样上传 → kernel 按
+// 相同布局解释。布局一旦漂移（加字段、改顺序、padding 变化），不会有任何
+// 编译错误，只会产生数据错位/非法访问类疑难杂症。
+// 这里的 static_assert 在 NVRTC 编译每个 kernel 时生效；HostDeviceInterface.h
+// 中的对应断言由 MSVC 与 NVRTC 双侧检查。有意修改布局时必须同步更新断言。
+// 注意：NVRTC 不接受字符串字面量中的非 ASCII 字符，断言消息只能用英文。
+// ============================================================================
+static_assert(sizeof(Point) == 16,                    "Point: float xyz + packed RGBA; host loader and upload ring buffer rely on 16 bytes");
+static_assert(sizeof(Voxel) == 8,                     "Voxel: uint8 xyz + filler + color");
+static_assert(POINTS_PER_CHUNK == 1000,               "upload ring buffer sizing and kernel batching rely on this");
+static_assert(GRID_SIZE == 128,                       "voxel sampling grid resolution, core paper constant");
+static_assert(GRID_NUM_CELLS == 128 * 128 * 128,      "GRID_SIZE squared; do not change independently");
+
 float4 operator*(const mat4& a, const float4& b){
 	return make_float4(
 		dot(a.rows[0], b),
@@ -142,3 +159,7 @@ struct Node{
 	}
 
 };
+
+// Chunk / OccupancyGrid 的断言必须位于其定义之后
+static_assert(sizeof(Chunk) == POINTS_PER_CHUNK * sizeof(Point) + 16, "Chunk: points array + size + padding_0 + next pointer");
+static_assert(sizeof(OccupancyGrid) == GRID_NUM_CELLS / 8, "OccupancyGrid: 1 bit per voxel");

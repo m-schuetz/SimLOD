@@ -71,6 +71,10 @@ struct Point{
 	};
 };
 
+// 与 structures.cuh 中设备端 Point 是两份独立定义，仅靠 16 字节布局保持兼容
+// （阶段 2 目录重组时应合并为共享定义）。此断言由 MSVC 检查宿主侧。
+static_assert(sizeof(Point) == 16, "宿主 Point 必须与设备端 structures.cuh::Point 布局一致");
+
 struct PointBatch{
 	string file = "";
 	int first = 0;

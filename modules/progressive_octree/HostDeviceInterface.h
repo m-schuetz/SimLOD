@@ -69,3 +69,14 @@ struct Stats{
 
 	bool memCapacityReached             = false;
 };
+
+// ============================================================================
+// 宿主(kernel 参数按值传递、Stats DtoH 回读)与设备侧共享布局契约锁。
+// 本头文件被 MSVC(宿主) 与 NVRTC(kernel) 双侧编译，断言因此被双侧校验：
+// 任一侧布局理解不一致时，对应编译立即失败，而非运行期数据错位。
+// 有意修改以下结构时必须同步更新断言。
+// 注意：NVRTC 的词法器不接受字符串字面量中的非 ASCII 字符，断言消息只能用英文。
+// ============================================================================
+static_assert(sizeof(mat4) == 64,     "mat4: 4 rows of float4");
+static_assert(sizeof(Uniforms) == 480, "Uniforms is passed to kernels by value as one block; host and device must agree");
+static_assert(sizeof(Stats) == 112,   "Stats must match cuMemAlloc(&cptr_stats, 112) at startup and the DtoH readback");
