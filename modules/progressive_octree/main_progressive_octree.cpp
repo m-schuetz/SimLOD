@@ -122,8 +122,9 @@ CudaModularProgram* cuda_program_update = nullptr;
 CudaModularProgram* cuda_program_render = nullptr;
 CudaModularProgram* cuda_program_reset  = nullptr;
 
-glm::mat4 transform;
-glm::mat4 transform_updatebound;
+// glm 1.0 的默认构造不再初始化为单位阵（0.9.9 会），显式给 identity
+glm::mat4 transform = glm::mat4(1.0f);
+glm::mat4 transform_updatebound = glm::mat4(1.0f);
 
 Stats stats;
 void* h_stats_pinned = nullptr;
@@ -292,7 +293,8 @@ void initCuda(){
 Uniforms getUniforms(shared_ptr<GLRenderer> renderer){
 	Uniforms uniforms;
 
-	glm::mat4 world;
+	// glm 1.0 的默认构造不再初始化为单位阵（0.9.9 会），必须显式给出单位阵
+	glm::mat4 world = glm::mat4(1.0f);
 	glm::mat4 view = renderer->camera->view;
 	glm::mat4 proj = renderer->camera->proj;
 	glm::mat4 worldViewProj = proj * view * world;
@@ -1230,6 +1232,23 @@ int main(int argc, char** argv){
 				printfmt("stats.numPointsProcessed = {} \n", stats.numPointsProcessed);
 				printfmt("numPointsTotal = {} \n", uint64_t(numPointsTotal));
 				printfmt("setting lastBatchFinishedDevice = {} \n", lastBatchFinishedDevice ? "true" : "false");
+			}
+
+			// 相机与可见性诊断（每 120 帧）
+			static int dbgFrameCounter = 0;
+			if((dbgFrameCounter++ % 120) == 0){
+				auto c = renderer->controls;
+				auto pos = c->getPosition();
+				printfmt("DBG frame {}: visibleNodes={} visiblePoints={} radius={:.1f} target=({:.1f},{:.1f},{:.1f}) pos=({:.1f},{:.1f},{:.1f}) \n",
+					dbgFrameCounter, stats.numVisibleNodes, stats.numVisiblePoints, c->radius,
+					c->target.x, c->target.y, c->target.z, pos.x, pos.y, pos.z);
+
+				Uniforms u = getUniforms(renderer);
+				printfmt("DBG2 boxMax=({:.1f},{:.1f},{:.1f}) transform row2=({:.4f},{:.4f},{:.4f},{:.4f}) row3=({:.4f},{:.4f},{:.4f},{:.4f}) \n",
+					u.boxMax.x, u.boxMax.y, u.boxMax.z,
+					u.transform.rows[2].x, u.transform.rows[2].y, u.transform.rows[2].z, u.transform.rows[2].w,
+					u.transform.rows[3].x, u.transform.rows[3].y, u.transform.rows[3].z, u.transform.rows[3].w);
+				cout.flush();
 			}
 		}
 

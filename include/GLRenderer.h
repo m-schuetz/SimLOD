@@ -129,12 +129,13 @@ struct View{
 
 struct Camera{
 
-	glm::dvec3 position;
-	glm::dmat4 rotation;
+	// glm 1.0 的默认构造不再初始化为单位阵，显式给 identity
+	glm::dvec3 position = glm::dvec3(0.0);
+	glm::dmat4 rotation = glm::dmat4(1.0);
 
-	glm::dmat4 world;
-	glm::dmat4 view;
-	glm::dmat4 proj;
+	glm::dmat4 world = glm::dmat4(1.0);
+	glm::dmat4 view = glm::dmat4(1.0);
+	glm::dmat4 proj = glm::dmat4(1.0);
 
 	double aspect = 1.0;
 	double fovy = 60.0;

@@ -17,7 +17,7 @@ struct OrbitControls{
 	double pitch = 0.0;
 	double radius = 2;
 	glm::dvec3 target = {0.0, 0.0, 0.0};
-	glm::dmat4 world;
+	glm::dmat4 world = glm::dmat4(1.0);
 
 	bool isLeftDown = false;
 	bool isRightDown = false;
