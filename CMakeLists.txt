@@ -1,11 +1,11 @@
-cmake_minimum_required(VERSION 3.22)
+﻿cmake_minimum_required(VERSION 3.22)
 project(SimLOD)
 
 include(FetchContent)
 
 set(CMAKE_CXX_STANDARD 20)
 
-# 中文 Windows (CP936) 下 vendored 库中的 UTF-8 字符会导致 C4819/C2001
+# 涓枃 Windows (CP936) 涓?vendored 搴撲腑鐨?UTF-8 瀛楃浼氬鑷?C4819/C2001
 if(MSVC)
 	add_compile_options(/utf-8)
 endif()
@@ -54,7 +54,7 @@ target_link_libraries(${PROJECT_NAME}
 	CUDA::cuda_driver
 	CUDA::nvrtc)
 
-## CudaModularProgram 用 nvJitLink 做 LTO 链接（CUDA 11.8 精简安装缺该组件，12.x 自带）
+## CudaModularProgram 鐢?nvJitLink 鍋?LTO 閾炬帴锛圕UDA 11.8 绮剧畝瀹夎缂鸿缁勪欢锛?2.x 鑷甫锛?
 if(TARGET CUDA::nvJitLink)
 	target_link_libraries(${PROJECT_NAME} CUDA::nvJitLink)
 endif()
@@ -64,15 +64,15 @@ find_package(OpenGL REQUIRED)
 target_link_libraries(${PROJECT_NAME} ${OPENGL_LIBRARY})
 
 ## fmt 
-add_subdirectory(libs/fmt)
+add_subdirectory(thirdparty/fmt)
 target_link_libraries(${PROJECT_NAME} fmt::fmt)
 
 ## glew
 target_include_directories(${PROJECT_NAME} PRIVATE
-	libs/glew/include)
+	thirdparty/glew/include)
 target_sources(${PROJECT_NAME} PRIVATE
-	libs/glew/glew.c)
-# 自带源码静态编译 glew，避免头文件 dllimport 声明与系统 glew32.lib 冲突 (LNK2005)
+	thirdparty/glew/glew.c)
+# 鑷甫婧愮爜闈欐€佺紪璇?glew锛岄伩鍏嶅ご鏂囦欢 dllimport 澹版槑涓庣郴缁?glew32.lib 鍐茬獊 (LNK2005)
 target_compile_definitions(${PROJECT_NAME} PRIVATE GLEW_STATIC)
 
 ## GLFW
@@ -83,33 +83,33 @@ target_link_libraries(${PROJECT_NAME} glfw)
 
 ## glm
 target_include_directories(${PROJECT_NAME} PRIVATE
-	libs/glm)
+	thirdparty/glm)
 
 ## imgui
 target_include_directories(${PROJECT_NAME} PRIVATE
-	libs/imgui
-	libs/imgui/backends)
+	thirdparty/imgui
+	thirdparty/imgui/backends)
 target_sources(${PROJECT_NAME} PRIVATE
-	libs/imgui/imgui.cpp
-	libs/imgui/imgui_demo.cpp
-	libs/imgui/imgui_draw.cpp
-	libs/imgui/imgui_tables.cpp
-	libs/imgui/imgui_widgets.cpp
-	libs/imgui/backends/imgui_impl_glfw.cpp
-	libs/imgui/backends/imgui_impl_opengl3.cpp)
+	thirdparty/imgui/imgui.cpp
+	thirdparty/imgui/imgui_demo.cpp
+	thirdparty/imgui/imgui_draw.cpp
+	thirdparty/imgui/imgui_tables.cpp
+	thirdparty/imgui/imgui_widgets.cpp
+	thirdparty/imgui/backends/imgui_impl_glfw.cpp
+	thirdparty/imgui/backends/imgui_impl_opengl3.cpp)
 
 ## implot
 target_include_directories(${PROJECT_NAME} PRIVATE
-	libs/implot)
+	thirdparty/implot)
 target_sources(${PROJECT_NAME} PRIVATE
-	libs/implot/implot_items.cpp
-	libs/implot/implot.cpp)
+	thirdparty/implot/implot_items.cpp
+	thirdparty/implot/implot.cpp)
 
 ## laszip
-add_subdirectory(libs/laszip)
+add_subdirectory(thirdparty/laszip)
 target_link_libraries(${PROJECT_NAME} laszip)
 target_include_directories(${PROJECT_NAME} PRIVATE
-	libs/laszip)
+	thirdparty/laszip)
 
 ## TODO: disable copying of cuda source files
 ## - developer builds should use the project root dir as the working directory and directly load from ./modules
