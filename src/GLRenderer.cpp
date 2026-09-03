@@ -251,6 +251,14 @@ void GLRenderer::loop(function<void(void)> update, function<void(void)> render){
 		// WINDOW
 		int width, height;
 		glfwGetWindowSize(window, &width, &height);
+
+		// 最小化时客户区为 0x0，0 尺寸纹理会导致 GL 报错并使 CUDA interop
+		// 访问无效资源崩溃，跳过本帧渲染
+		if(width == 0 || height == 0){
+			glfwPollEvents();
+			continue;
+		}
+
 		camera->setSize(width, height);
 		this->width = width;
 		this->height = height;
