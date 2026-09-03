@@ -604,13 +604,46 @@ void initCudaProgram(shared_ptr<GLRenderer> renderer){
 	}
 
 	// allocate persistent (over multiple frames) buffer with remaining GPU memory
+	//
+	// 自适应策略：吃掉当前可用显存，仅预留安全余量（旧行为是 available * 0.80，
+	// 比例式余量不随机器规模伸缩——大显存机器浪费、小显存机器也未必合适）。
+	// 余量用于覆盖：后续小分配(cudaprint/cubin 加载等)、桌面合成器与其他进程的
+	// 动态需求、WDDM 逐页调度开销。余量过小会把整机推入共享内存页调度，反而劣化。
 	size_t availableMem = 0;
 	size_t totalMem = 0;
 	cuMemGetInfo(&availableMem, &totalMem);
 
-	size_t cptr_buffer_persistent_bytes = static_cast<size_t>(static_cast<double>(availableMem) * 0.80);
+	constexpr double RELATIVE_MARGIN = 0.05;   // 总显存的 5%
+	constexpr size_t ABSOLUTE_MARGIN = 256'000'000; // 且至少 256 MB
+	size_t margin = std::max<size_t>(size_t(double(totalMem) * RELATIVE_MARGIN), ABSOLUTE_MARGIN);
+
+	size_t cptr_buffer_persistent_bytes = (availableMem > margin)
+		? availableMem - margin
+		: availableMem / 2;
+
 	persistentBufferCapacity = cptr_buffer_persistent_bytes;
-	cuMemAlloc(&cptr_buffer_persistent, cptr_buffer_persistent_bytes);
+
+	// 分配失败(如桌面临时占用大)则逐次砍半重试，不再静默吞掉返回值
+	CUresult memResult = cuMemAlloc(&cptr_buffer_persistent, cptr_buffer_persistent_bytes);
+	for(int retry = 0; memResult != CUDA_SUCCESS && retry < 3; retry++){
+		const char* errStr = "";
+		cuGetErrorString(memResult, &errStr);
+		printfmt("cuMemAlloc(persistent, {} MB) failed: {} - retrying with half size \n",
+			cptr_buffer_persistent_bytes / 1'000'000llu, errStr);
+
+		cptr_buffer_persistent_bytes = cptr_buffer_persistent_bytes / 2;
+		persistentBufferCapacity = cptr_buffer_persistent_bytes;
+		memResult = cuMemAlloc(&cptr_buffer_persistent, cptr_buffer_persistent_bytes);
+	}
+	if(memResult != CUDA_SUCCESS){
+		printfmt("FATAL: cuMemAlloc(persistent) failed after retries \n");
+	}
+
+	printfmt("persistent buffer: total {:8L} MB, available {:8L} MB, margin {:8L} MB, allocated {:8L} MB \n",
+		totalMem / 1'000'000llu,
+		availableMem / 1'000'000llu,
+		margin / 1'000'000llu,
+		cptr_buffer_persistent_bytes / 1'000'000llu);
 
 	uint64_t total = cptr_buffer_bytes 
 		+ cptr_nodes_bytes
