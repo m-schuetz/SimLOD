@@ -1,11 +1,9 @@
-﻿cmake_minimum_required(VERSION 3.22)
+cmake_minimum_required(VERSION 3.22)
 project(SimLOD)
-
-include(FetchContent)
 
 set(CMAKE_CXX_STANDARD 20)
 
-# 涓枃 Windows (CP936) 涓?vendored 搴撲腑鐨?UTF-8 瀛楃浼氬鑷?C4819/C2001
+# 中文 Windows (CP936) 下部分依赖头文件中的 UTF-8 字符会导致 C4819/C2001
 if(MSVC)
 	add_compile_options(/utf-8)
 endif()
@@ -13,12 +11,15 @@ endif()
 option(SimLOD_CreateCUDASymlinks "Create symbolic links instead of copying CUDA files." OFF)
 
 # Target SimLOD
+# 依赖全部来自全局 vcpkg（classic 模式），构建时需传入 vcpkg 工具链：
+#   cmake --preset vcpkg-debug   （见 CMakePresets.json）
+#   或 cmake -B build -DCMAKE_TOOLCHAIN_FILE=%VCPKG%/scripts/buildsystems/vcpkg.cmake
 
 add_executable(${PROJECT_NAME}
 	src/GLRenderer.cpp
-    include/unsuck_platform_specific.cpp	
-    modules/progressive_octree/LasLoader.cpp	
-    modules/progressive_octree/SimlodLoader.cpp	
+    include/unsuck_platform_specific.cpp
+    modules/progressive_octree/LasLoader.cpp
+    modules/progressive_octree/SimlodLoader.cpp
 	modules/progressive_octree/main_progressive_octree.cpp)
 set_property(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT ${PROJECT_NAME})
 set_target_properties(${PROJECT_NAME} PROPERTIES VS_DEBUGGER_WORKING_DIRECTORY "$<TARGET_FILE_DIR:${PROJECT_NAME}>"
@@ -45,8 +46,8 @@ target_include_directories(${PROJECT_NAME} PRIVATE
 
 # Dependencies
 
-## CUDA toolkit
-find_package(CUDAToolkit 11.8 REQUIRED)
+
+find_package(CUDAToolkit 12.5 REQUIRED)
 target_include_directories(${PROJECT_NAME} PRIVATE
 	${CUDAToolkit_INCLUDE_DIRS})
 
@@ -54,7 +55,6 @@ target_link_libraries(${PROJECT_NAME}
 	CUDA::cuda_driver
 	CUDA::nvrtc)
 
-## CudaModularProgram 鐢?nvJitLink 鍋?LTO 閾炬帴锛圕UDA 11.8 绮剧畝瀹夎缂鸿缁勪欢锛?2.x 鑷甫锛?
 if(TARGET CUDA::nvJitLink)
 	target_link_libraries(${PROJECT_NAME} CUDA::nvJitLink)
 endif()
@@ -63,53 +63,28 @@ endif()
 find_package(OpenGL REQUIRED)
 target_link_libraries(${PROJECT_NAME} ${OPENGL_LIBRARY})
 
-## fmt 
-add_subdirectory(thirdparty/fmt)
-target_link_libraries(${PROJECT_NAME} fmt::fmt)
+# glm 1.0.x: gtx/transform.hpp 需要显式启用实验扩展（0.9.9 无此要求）
+target_compile_definitions(${PROJECT_NAME} PRIVATE GLM_ENABLE_EXPERIMENTAL)
 
-## glew
-target_include_directories(${PROJECT_NAME} PRIVATE
-	thirdparty/glew/include)
-target_sources(${PROJECT_NAME} PRIVATE
-	thirdparty/glew/glew.c)
-# 鑷甫婧愮爜闈欐€佺紪璇?glew锛岄伩鍏嶅ご鏂囦欢 dllimport 澹版槑涓庣郴缁?glew32.lib 鍐茬獊 (LNK2005)
-target_compile_definitions(${PROJECT_NAME} PRIVATE GLEW_STATIC)
+## vcpkg 依赖（classic 模式全局安装）
+find_package(fmt CONFIG REQUIRED)
+find_package(glfw3 CONFIG REQUIRED)
+find_package(GLEW REQUIRED)
+find_package(glm CONFIG REQUIRED)
+find_package(imgui CONFIG REQUIRED)
+find_package(implot CONFIG REQUIRED)
+find_path(LASZIP_INCLUDE_DIR laszip_api.h PATH_SUFFIXES laszip)
+find_library(LASZIP_LIBRARY NAMES laszip3 laszip)
 
-## GLFW
-include(cmake/glfw.cmake)
-target_include_directories(${PROJECT_NAME} PRIVATE
-	${glfw_SOURCE_DIR}/include)
-target_link_libraries(${PROJECT_NAME} glfw)
-
-## glm
-target_include_directories(${PROJECT_NAME} PRIVATE
-	thirdparty/glm)
-
-## imgui
-target_include_directories(${PROJECT_NAME} PRIVATE
-	thirdparty/imgui
-	thirdparty/imgui/backends)
-target_sources(${PROJECT_NAME} PRIVATE
-	thirdparty/imgui/imgui.cpp
-	thirdparty/imgui/imgui_demo.cpp
-	thirdparty/imgui/imgui_draw.cpp
-	thirdparty/imgui/imgui_tables.cpp
-	thirdparty/imgui/imgui_widgets.cpp
-	thirdparty/imgui/backends/imgui_impl_glfw.cpp
-	thirdparty/imgui/backends/imgui_impl_opengl3.cpp)
-
-## implot
-target_include_directories(${PROJECT_NAME} PRIVATE
-	thirdparty/implot)
-target_sources(${PROJECT_NAME} PRIVATE
-	thirdparty/implot/implot_items.cpp
-	thirdparty/implot/implot.cpp)
-
-## laszip
-add_subdirectory(thirdparty/laszip)
-target_link_libraries(${PROJECT_NAME} laszip)
-target_include_directories(${PROJECT_NAME} PRIVATE
-	thirdparty/laszip)
+target_link_libraries(${PROJECT_NAME}
+	fmt::fmt
+	glfw
+	GLEW::GLEW
+	glm::glm
+	imgui::imgui
+	implot::implot
+	${LASZIP_LIBRARY})
+target_include_directories(${PROJECT_NAME} PRIVATE ${LASZIP_INCLUDE_DIR})
 
 ## TODO: disable copying of cuda source files
 ## - developer builds should use the project root dir as the working directory and directly load from ./modules
@@ -145,4 +120,3 @@ else ()
 			"$<TARGET_FILE_DIR:${PROJECT_NAME}>/modules"
 		COMMENT "POST BUILD: creating symlink for modules folder")
 endif (symlinksSupported OR NOT SimLOD_CreateCUDASymlinks)
-
