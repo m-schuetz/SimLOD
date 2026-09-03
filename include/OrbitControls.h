@@ -142,9 +142,9 @@ struct OrbitControls{
 		glm::dvec3 right = {1, 0, 0};
 
 		auto translateRadius = glm::translate(
-			glm::dmat4(), 
+			glm::dmat4(1.0),
 			glm::dvec3(0.0, 0.0, radius));
-		auto translateTarget = glm::translate(glm::dmat4(), target);
+		auto translateTarget = glm::translate(glm::dmat4(1.0), target);
 		auto rotYaw = glm::rotate(yaw, up);
 		auto rotPitch = glm::rotate(pitch, right);
 

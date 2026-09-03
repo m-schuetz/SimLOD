@@ -1248,6 +1248,14 @@ int main(int argc, char** argv){
 					u.boxMax.x, u.boxMax.y, u.boxMax.z,
 					u.transform.rows[2].x, u.transform.rows[2].y, u.transform.rows[2].z, u.transform.rows[2].w,
 					u.transform.rows[3].x, u.transform.rows[3].y, u.transform.rows[3].z, u.transform.rows[3].w);
+
+				glm::dmat4 cw = renderer->camera->world;
+				glm::dmat4 cv = renderer->camera->view;
+				glm::dmat4 cp = renderer->camera->proj;
+				printfmt("DBG3 camWorld col3=({:.3f},{:.3f},{:.3f},{:.3f}) view col3=({:.3f},{:.3f},{:.3f},{:.3f}) proj col0=({:.4f},{:.4f},{:.4f},{:.4f}) \n",
+					cw[3].x, cw[3].y, cw[3].z, cw[3].w,
+					cv[3].x, cv[3].y, cv[3].z, cv[3].w,
+					cp[0].x, cp[0].y, cp[0].z, cp[0].w);
 				cout.flush();
 			}
 		}
