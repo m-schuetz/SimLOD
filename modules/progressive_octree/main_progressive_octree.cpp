@@ -578,7 +578,12 @@ void initCudaProgram(shared_ptr<GLRenderer> renderer){
 	// allocate most gpu buffers
 	uint64_t nodesCapacity           = 200'000;
 	uint64_t estimatedNodeSize       = 200;           // see struct Node in progressive_octree.cu, but some more just in case
-	uint64_t cptr_buffer_bytes       = 300'000'000;
+	// momentary 分配器实测稳态需求 ~607MB（backlog 240MB + 其余），原值 300MB
+	// 长期越界写入相邻显存。640MB = 实测需求 + ~5% 余量，使分配回到界内。
+	// 注意：momentary Allocator 的 offset 为非原子、依赖全网格均匀调用的竞态
+	// 收敛，无法做调用点级容量检查，安全性只能靠背板 ≥ 需求保证。
+	// persistent 池为自适应分配，会自动吸收此变化。
+	uint64_t cptr_buffer_bytes       = 640'000'000;
 	uint64_t cptr_nodes_bytes        = nodesCapacity * estimatedNodeSize;
 	uint64_t cptr_renderbuffer_bytes = 200'000'000;
 

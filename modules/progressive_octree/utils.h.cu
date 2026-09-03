@@ -181,15 +181,31 @@ struct AllocatorGlobal{
 
 	uint8_t* buffer = nullptr;
 	uint64_t offset = 0;
+	// 容量保护：~0ull 表示未知(不检查)。reset kernel 会写入 persistentBufferCapacity。
+	// 本分配器走 atomicAdd，越界钳制语义正确：越界时 offset 钉在容量内、
+	// 返回池内哨兵地址，避免写穿显存造成 illegal access。
+	uint64_t capacity = ~0ull;
+	bool overflowReported = false;
 
 	uint8_t* alloc(uint64_t size){
 
-		// make allocated buffer location 16-byte aligned to avoid 
+		// make allocated buffer location 16-byte aligned to avoid
 		// potential problems with bad alignments
 		// round up to nearest 16
 		uint64_t size_16 = 16ll * ((size + 16ll) / 16ll);
 
 		uint64_t oldOffset = atomicAdd(&offset, size_16);
+
+		if(capacity != ~0ull && oldOffset + size_16 > capacity){
+			if(!overflowReported){
+				overflowReported = true;
+				printf("WARNING: persistent allocator out of memory (capacity: %llu MB). Further allocations are clamped. \n",
+					capacity / (1024llu * 1024llu));
+			}
+			atomicExch(&offset, capacity & ~15ull);
+			uint64_t safeCapacity = capacity & ~15ull;
+			return buffer + (size_16 >= safeCapacity ? 0ull : safeCapacity - size_16);
+		}
 
 		uint8_t* ptr = buffer + oldOffset;
 
@@ -201,6 +217,17 @@ struct AllocatorGlobal{
 		uint64_t size_16 = 16ll * ((size + 16ll) / 16ll);
 
 		uint64_t oldOffset = atomicAdd(&offset, size_16);
+
+		if(capacity != ~0ull && oldOffset + size_16 > capacity){
+			if(!overflowReported){
+				overflowReported = true;
+				printf("WARNING: persistent allocator out of memory (capacity: %llu MB). Further allocations are clamped. \n",
+					capacity / (1024llu * 1024llu));
+			}
+			atomicExch(&offset, capacity & ~15ull);
+			uint64_t safeCapacity = capacity & ~15ull;
+			size_16 = (size_16 >= safeCapacity) ? safeCapacity : size_16;
+		}
 
 		uint8_t* ptr = buffer + oldOffset;
 

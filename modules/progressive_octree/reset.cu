@@ -38,9 +38,12 @@ void kernel(
 	Node* root = &nodes[0];
 		
 	if(grid.thread_rank() == 0){
-		
+
 		allocator_octree->buffer = buffer_octree;
-		allocator_octree->offset = 16; // 16-aligned, first 8 byte is allocator itself
+		// 结构体头(buffer+offset+capacity+flag)共 32 字节，数据区紧随其后
+		allocator_octree->offset = 32;
+		allocator_octree->capacity = uniforms.persistentBufferCapacity;
+		allocator_octree->overflowReported = false;
 
 		*stats = Stats();
 
