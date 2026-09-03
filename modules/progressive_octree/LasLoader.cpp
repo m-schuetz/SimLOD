@@ -219,6 +219,14 @@ void loadLasNative(string file, LasHeader header, uint64_t firstPoint, uint64_t 
 			point.r = rgb[0] > 255 ? rgb[0] / 256 : rgb[0];
 			point.g = rgb[1] > 255 ? rgb[1] / 256 : rgb[1];
 			point.b = rgb[2] > 255 ? rgb[2] / 256 : rgb[2];
+			point.a = 255;
+		}else{
+			// LAS 格式 0/1/4 无 RGB 字段：不初始化会留下栈垃圾值(表现为整片单色)，
+			// 给中性灰作为默认色
+			point.r = 200;
+			point.g = 200;
+			point.b = 200;
+			point.a = 255;
 		}
 		
 		pTarget[i] = point;
