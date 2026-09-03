@@ -120,7 +120,6 @@ cudaStream_t stream_upload, stream_download;
 
 CudaModularProgram* cuda_program_update = nullptr;
 CudaModularProgram* cuda_program_render = nullptr;
-// CudaModularProgram* cuda_program_filter = nullptr;
 CudaModularProgram* cuda_program_reset  = nullptr;
 
 glm::mat4 transform;
@@ -237,7 +236,6 @@ bool requestReset                  = false;
 bool requestBenchmark              = false;
 atomic_bool requestStepthrough     = false;
 atomic_bool requestStep            = false;
-bool requestColorFiltering         = false;
 float renderingDuration            = 0.0f;
 uint32_t numPointsUploaded         = 0;
 float loadStart                    = 0.0f;
@@ -438,40 +436,6 @@ void updateOctree(shared_ptr<GLRenderer> renderer){
 	// cuCtxSynchronize();
 }
 
-// post-process color-filtering.
-// computes average color values for voxels.
-// void doColorFiltering(shared_ptr<GLRenderer> renderer){
-
-// 	if(!lastBatchFinishedDevice) return;
-
-// 	Uniforms uniforms = getUniforms(renderer);
-
-// 	int workgroupSize = 256;
-// 	int numGroups = numSMs;
-
-// 	void* args[] = {
-// 		&uniforms,
-// 		&cptr_buffer, 
-// 		&cptr_nodes, 
-// 		&cptr_stats
-// 	};
-
-// 	printfmt("launching color filter!\n");
-
-// 	auto res_launch = cuLaunchCooperativeKernel(cuda_program_filter->kernels["kernel"],
-// 		numGroups, 1, 1,
-// 		workgroupSize, 1, 1,
-// 		0, 0, args);
-
-// 	if(res_launch != CUDA_SUCCESS){
-// 		const char* str; 
-// 		cuGetErrorString(res_launch, &str);
-// 		printf("error: %s \n", str);
-// 	}
-
-// 	requestColorFiltering = false;
-// }
-
 // draw the octree with a CUDA kernel
 void renderCUDA(shared_ptr<GLRenderer> renderer){
 
@@ -668,7 +632,6 @@ void initCudaProgram(shared_ptr<GLRenderer> renderer){
 	cuda_program_update = new CudaModularProgram({
 		.modules = {
 			"./modules/progressive_octree/progressive_octree_voxels.cu",
-			  //"./modules/progressive_octree/progressive_octree_mno.cu",
 			"./modules/progressive_octree/utils.cu",
 		},
 		.kernels = {"kernel_construct"}
@@ -689,14 +652,6 @@ void initCudaProgram(shared_ptr<GLRenderer> renderer){
 		},
 		.kernels = {"kernel_render"}
 	});
-
-	// cuda_program_filter = new CudaModularProgram({
-	// 	.modules = {
-	// 		"./modules/progressive_octree/colorfilter.cu",
-	// 		"./modules/progressive_octree/utils.cu",
-	// 	},
-	// 	.kernels = {"kernel"}
-	// });
 
 	cuEventCreate(&ce_render_start, 0);
 	cuEventCreate(&ce_render_end, 0);
@@ -1148,23 +1103,6 @@ int main(int argc, char** argv){
 		boxSize.z * 0.1f
 	};
 
-	// renderer->controls->yaw    = 0.982;
-	// renderer->controls->pitch  = -0.875;
-	// renderer->controls->radius = 449.807;
-	// renderer->controls->target = { 1154.460, 218.177, -92.225, };
-
-	// renderer->controls->yaw    = 7.670;
-	// renderer->controls->pitch  = -0.677;
-	// renderer->controls->radius = 929.239;
-	// renderer->controls->target = { 606.560, 385.040, 13.848, };
-
-	// position: 448.8209204653559, 768.7683535080489, 23.676426584479366 
-	// renderer->controls->yaw    = -4.660;
-	// renderer->controls->pitch  = -0.293;
-	// renderer->controls->radius = 94.341;
-	// renderer->controls->target = { 354.609, 764.038, 25.101, };
-
-
 	initCuda();
 	initCudaProgram(renderer);
 
@@ -1252,10 +1190,6 @@ int main(int argc, char** argv){
 		if(!lastBatchFinishedDevice){
 			updateOctree(renderer);
 		}
-
-		// if(requestColorFiltering){
-		// 	doColorFiltering(renderer);
-		// }
 
 		if(!lastBatchFinishedDevice){
 			totalUpdateDuration = 1000.0f * (static_cast<float>(now()) - loadStart);
@@ -1461,10 +1395,6 @@ int main(int argc, char** argv){
 				toClipboard(str);
 #endif
 			}
-
-			// if(ImGui::Button("Do Color Filtering!")){
-			// 	requestColorFiltering = true;
-			// }
 
 			ImGui::End();
 		}

@@ -1,23 +1,14 @@
 #pragma once
 
 constexpr float PI = 3.1415;
-// constexpr int MAX_POINTS_PER_NODE = 100;
-// constexpr int MAX_POINTS_PER_NODE = 5'000;
-// constexpr uint32_t POINTS_PER_CHUNK = 1000;
+
 constexpr bool RIGHTSIDE_BOXES = false;
 constexpr bool RIGHTSIDE_NODECOLORS = false;
 
 constexpr bool ENABLE_TRACE = false;
-// constexpr int MAX_DEPTH = 20;
-// constexpr float MAX_DEPTH_GRIDSIZE = 268'435'456.0f;
 
-// constexpr int MAX_POINTS_PER_NODE       = 5'000;
-// constexpr uint32_t POINTS_PER_CHUNK     = 256;
-// constexpr uint32_t GRID_SIZE            = 64;
-// constexpr uint32_t GRID_NUM_CELLS       = GRID_SIZE * GRID_SIZE * GRID_SIZE;
-// constexpr int MAX_DEPTH                 = 17;
-// constexpr float MAX_DEPTH_GRIDSIZE      = 16'777'216.0f;
-
+// 核心常量：节点超过 MAX_POINTS_PER_NODE 点即分裂；内部节点在 GRID_SIZE^3
+// 网格上采样体素作为 LOD 代理；MAX_DEPTH_GRIDSIZE 为根节点的世界尺寸上限
 constexpr int MAX_POINTS_PER_NODE    = 50'000;
 constexpr uint32_t POINTS_PER_CHUNK  = 1000;
 constexpr uint32_t GRID_SIZE         = 128;
