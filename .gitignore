@@ -26,3 +26,4 @@ build/
 .generated_cuda_programs/reset.cu__utils.cu/cubin
 build_old/
 out/
+.vs/
