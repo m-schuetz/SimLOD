@@ -338,6 +338,41 @@ void GLRenderer::loop(function<void(void)> update, function<void(void)> render){
 			// sFrames.AddPoint(t, 1000.0f * timeSinceLastFrame);
 			s60fps.AddPoint(t, 1000.0f / 60.0f);
 			s120fps.AddPoint(t, 1000.0f / 120.0f);
+
+#if IMPLOT_VERSION_NUM >= 10000
+			// implot >= 1.0: Setup 预配置 + double 数组中转
+			// （float ImVec2 序列需转 double；PlotShadedG 回调版实测崩溃，弃用）
+			static double fx[2000], fy[2000];
+			static double x60[2000], y60[2000];
+			static double x120[2000], y120[2000];
+
+			const int nF = (int)sFrames.Data.size();
+			for(int i = 0; i < nF; i++){
+				ImVec2 p = sFrames.Data[(sFrames.Offset + i) % sFrames.MaxSize];
+				fx[i] = p.x; fy[i] = p.y;
+			}
+			const int n60 = (int)s60fps.Data.size();
+			for(int i = 0; i < n60; i++){
+				ImVec2 p = s60fps.Data[(s60fps.Offset + i) % s60fps.MaxSize];
+				x60[i] = p.x; y60[i] = p.y;
+			}
+			const int n120 = (int)s120fps.Data.size();
+			for(int i = 0; i < n120; i++){
+				ImVec2 p = s120fps.Data[(s120fps.Offset + i) % s120fps.MaxSize];
+				x120[i] = p.x; y120[i] = p.y;
+			}
+
+			ImPlot::SetNextAxisLimits(ImAxis_X1, t - history, t, ImGuiCond_Always);
+			ImPlot::SetNextAxisLimits(ImAxis_Y1, 0, 30, ImGuiCond_Always);
+
+			if (ImPlot::BeginPlot("Timings", ImVec2(-1, 200))){
+				ImPlot::PlotShaded("frame time(ms)", fx, fy, nF, -Infinity);
+				ImPlot::PlotLine("16.6ms (60 FPS)", x60, y60, n60);
+				ImPlot::PlotLine(" 8.3ms (120 FPS)", x120, y120, n120);
+
+				ImPlot::EndPlot();
+			}
+#else
 			static ImPlotAxisFlags rt_axis = ImPlotAxisFlags_NoTickLabels;
 			ImPlot::SetNextPlotLimitsX(t - history, t, ImGuiCond_Always);
 			ImPlot::SetNextPlotLimitsY(0, 30, ImGuiCond_Always);
@@ -353,6 +388,7 @@ void GLRenderer::loop(function<void(void)> update, function<void(void)> render){
 
 				ImPlot::EndPlot();
 			}
+#endif
 
 			ImGui::End();
 		}
